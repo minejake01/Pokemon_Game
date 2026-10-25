@@ -1,6 +1,6 @@
 import Phaser from 'phaser'
 import { getWorld, isWalkable, biomeAt, zoneLevel, distFromTown, MAP_W, MAP_H, TILE, BLOCKING } from '../../shared/world.js'
-import { buildTileset, buildTrainer, buildCenter } from './tiles.js'
+import { buildTileset, buildTrainer, buildCenter, buildNpc } from './tiles.js'
 import { api } from '../api.js'
 import { store } from '../store.js'
 
@@ -11,6 +11,8 @@ const SPAWN_MIN = 7, SPAWN_MAX = 15 // tiles from the player
 const DESPAWN_DIST = 26 // tiles
 const WILD_SCALE = 0.62
 const FOLLOW_GAP = 14 // trail samples between trainer and follower
+const TALK_DIST = 1.7 * TILE
+const pkKey = (speciesId, shiny) => `pk${speciesId}${shiny ? 's' : ''}`
 
 export class WorldScene extends Phaser.Scene {
   constructor() {
@@ -37,6 +39,7 @@ export class WorldScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE)
     this.physics.add.collider(this.player, this.groundLayer)
     this.physics.add.collider(this.player, this.decoLayer)
+    this.createTrainers()
 
     this.cameras.main.setBounds(0, 0, MAP_W * TILE, MAP_H * TILE)
     this.cameras.main.startFollow(this.player, true, 0.15, 0.15)
@@ -45,19 +48,23 @@ export class WorldScene extends Phaser.Scene {
     this.scale.on('resize', () => this.fitZoom())
 
     this.cursors = this.input.keyboard.createCursorKeys()
-    this.keys = this.input.keyboard.addKeys('W,A,S,D,SHIFT')
+    this.keys = this.input.keyboard.addKeys('W,A,S,D,SHIFT,E,SPACE', false)
 
     this.wilds = new Map() // spawnId -> { sprite, label, spawn, nextThink }
     this.wildGroup = this.physics.add.group()
     this.physics.add.collider(this.wildGroup, this.groundLayer)
     this.physics.add.collider(this.wildGroup, this.decoLayer)
+    this.physics.add.collider(this.wildGroup, this.trainerGroup)
     this.physics.add.overlap(this.player, this.wildGroup, (_, s) => this.touchWild(s.getData('spawnId')))
 
     this.trail = []
     this.follower = null
     this.followerSpecies = null
     this.loadQueue = Promise.resolve()
-    this.unsub = store.subscribe(() => this.refreshFollower())
+    this.unsub = store.subscribe(() => {
+      this.refreshFollower()
+      this.refreshTrainerMarks()
+    })
     this.events.once('shutdown', () => this.unsub())
     this.refreshFollower()
 
@@ -76,7 +83,7 @@ export class WorldScene extends Phaser.Scene {
       this.battling = true
       this.time.delayedCall(300, () => {
         this.scene.pause()
-        this.bridge.onBattle({ id: null }, () => {})
+        this.bridge.onBattle(() => api.battleStart(null), () => {})
       })
     }
     this.events.on('resume', () => {
@@ -111,11 +118,11 @@ export class WorldScene extends Phaser.Scene {
   // ---- Follower (lead Pokémon walks behind the trainer) --------------------
   refreshFollower() {
     const lead = store.state?.team.find((m) => m.hp > 0) ?? store.state?.team[0]
-    if (!lead || lead.speciesId === this.followerSpecies) return
-    this.followerSpecies = lead.speciesId
-    const key = `pk${lead.speciesId}`
+    const key = lead && pkKey(lead.speciesId, lead.shiny)
+    if (!lead || key === this.followerSpecies) return
+    this.followerSpecies = key
     this.ensureTexture(key, lead.sprite).then(() => {
-      if (this.followerSpecies !== lead.speciesId) return
+      if (this.followerSpecies !== key) return
       if (this.follower) this.follower.setTexture(key)
       else this.follower = this.add.image(this.player.x, this.player.y, key).setScale(0.5).setOrigin(0.5, 0.85)
     })
@@ -164,7 +171,7 @@ export class WorldScene extends Phaser.Scene {
     this.spawnBusy = true
     try {
       const { spawn } = await api.spawn(tx, ty)
-      if (spawn && (await this.ensureTexture(`pk${spawn.speciesId}`, spawn.sprite)) && !this.battling) this.addWild(spawn)
+      if (spawn && (await this.ensureTexture(pkKey(spawn.speciesId, spawn.shiny), spawn.sprite)) && !this.battling) this.addWild(spawn)
     } catch (err) {
       console.warn('spawn failed', err)
     } finally {
@@ -173,15 +180,16 @@ export class WorldScene extends Phaser.Scene {
   }
 
   addWild(spawn) {
-    const sprite = this.wildGroup.create((spawn.tx + 0.5) * TILE, (spawn.ty + 0.5) * TILE, `pk${spawn.speciesId}`)
+    const sprite = this.wildGroup.create((spawn.tx + 0.5) * TILE, (spawn.ty + 0.5) * TILE, pkKey(spawn.speciesId, spawn.shiny))
     sprite.setScale(WILD_SCALE).setOrigin(0.5, 0.75).setData('spawnId', spawn.id).setAlpha(0)
     sprite.body.setSize(40, 30).setOffset(28, 50)
     sprite.setCollideWorldBounds(true)
     this.tweens.add({ targets: sprite, alpha: 1, duration: 400 })
-    const label = this.add.text(sprite.x, sprite.y, `Lv${spawn.level}`, {
+    const label = this.add.text(sprite.x, sprite.y, `${spawn.shiny ? '✨' : ''}Lv${spawn.level}`, {
       fontFamily: 'monospace', fontSize: '10px', color: '#fff', stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5, 1)
     if (spawn.aggressive) label.setColor('#ffb3b3')
+    if (spawn.shiny) label.setColor('#ffe066')
     this.wilds.set(spawn.id, { sprite, label, spawn, nextThink: 0 })
   }
 
@@ -210,6 +218,15 @@ export class WorldScene extends Phaser.Scene {
         s.setVelocity(Math.cos(a) * 40, Math.sin(a) * 40)
       }
     }
+    // Water Pokémon stay in the water and land Pokémon stay on land.
+    const vx = s.body.velocity.x, vy = s.body.velocity.y
+    if (vx || vy) {
+      const ahead = biomeAt(this.world, Math.floor((s.x + vx * 0.3) / TILE), Math.floor((s.y + vy * 0.3) / TILE))
+      if ((ahead === 'water') !== !!w.spawn.aquatic) {
+        s.setVelocity(0, 0)
+        w.nextThink = Math.min(w.nextThink, time + 300)
+      }
+    }
     if (s.body.velocity.x !== 0) s.setFlipX(s.body.velocity.x > 0) // front sprites face left
     s.setDepth(s.y)
     w.label.setPosition(s.x, s.y - 44).setDepth(s.y + 1)
@@ -226,7 +243,65 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.flash(250, 255, 255, 255)
     this.time.delayedCall(260, () => {
       this.scene.pause()
-      this.bridge.onBattle(w.spawn, () => this.removeWild(spawnId))
+      this.bridge.onBattle(() => api.battleStart(spawnId), () => this.removeWild(spawnId))
+    })
+  }
+
+  // ---- Trainer NPCs ----------------------------------------------------------
+  createTrainers() {
+    this.trainerGroup = this.physics.add.group({ immovable: true, allowGravity: false })
+    this.trainers = this.world.trainers.map((t) => {
+      const key = `npc-${t.cls}`
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, buildNpc(t.cls))
+      const x = (t.x + 0.5) * TILE, y = (t.y + 0.5) * TILE
+      const sprite = this.trainerGroup.create(x, y, key).setOrigin(0.5, 0.9).setDepth(y)
+      sprite.body.setSize(16, 12).setOffset(4, 19)
+      sprite.body.moves = false
+      const style = { fontFamily: 'monospace', fontSize: '9px', color: '#fff', stroke: '#000', strokeThickness: 3 }
+      const label = this.add.text(x, y - 30, t.name, style).setOrigin(0.5, 1).setDepth(y + 1)
+      const mark = this.add.text(x, y - 40, '!', { ...style, fontSize: '14px', color: '#ff5252' }).setOrigin(0.5, 1).setDepth(y + 1)
+      return { t, sprite, label, mark }
+    })
+    this.physics.add.collider(this.player, this.trainerGroup)
+    this.talkPrompt = this.add.text(0, 0, 'E  Talk', {
+      fontFamily: 'monospace', fontSize: '10px', color: '#23222b', backgroundColor: '#ffcb05', padding: { x: 4, y: 2 },
+    }).setOrigin(0.5, 1).setVisible(false).setDepth(1e6)
+    this.refreshTrainerMarks()
+  }
+
+  // "!" = never beaten, "✓" = beaten (ask for a rematch later).
+  refreshTrainerMarks() {
+    const wins = store.state?.trainers ?? {}
+    for (const n of this.trainers ?? []) {
+      const beaten = (wins[n.t.id] ?? 0) > 0
+      n.mark.setText(beaten ? '✓' : '!').setColor(beaten ? '#7bed9f' : '#ff5252')
+    }
+  }
+
+  nearestTrainer() {
+    let best = null, bestD = TALK_DIST
+    for (const n of this.trainers) {
+      const d = Phaser.Math.Distance.Between(n.sprite.x, n.sprite.y, this.player.x, this.player.y)
+      if (d < bestD) { best = n; bestD = d }
+    }
+    return best
+  }
+
+  talkTo(n) {
+    this.player.setVelocity(0, 0)
+    n.sprite.setFlipX(this.player.x < n.sprite.x)
+    this.reportPosition(true).then(() => this.bridge.onTrainer(n.t))
+  }
+
+  beginTrainerBattle(t) {
+    if (this.battling) return
+    this.battling = true
+    this.player.setVelocity(0, 0)
+    for (const o of this.wilds.values()) o.sprite.setVelocity(0, 0)
+    this.cameras.main.flash(250, 255, 255, 255)
+    this.reportPosition(true).then(() => {
+      this.scene.pause()
+      this.bridge.onBattle(() => api.trainerBattle(t.id), () => {})
     })
   }
 
@@ -282,7 +357,8 @@ export class WorldScene extends Phaser.Scene {
     const k = this.keys, c = this.cursors
     const dx = (c.right.isDown || k.D.isDown ? 1 : 0) - (c.left.isDown || k.A.isDown ? 1 : 0)
     const dy = (c.down.isDown || k.S.isDown ? 1 : 0) - (c.up.isDown || k.W.isDown ? 1 : 0)
-    const v = new Phaser.Math.Vector2(dx, dy).normalize().scale(WALK * (k.SHIFT.isDown ? RUN_MULT : 1))
+    const walk = WALK * (1 + (store.state.upgrades?.walkBonus ?? 0)) // "Faster Walking" upgrade cards
+    const v = new Phaser.Math.Vector2(dx, dy).normalize().scale(walk * (k.SHIFT.isDown ? RUN_MULT : 1))
     this.player.setVelocity(v.x, v.y)
     const moving = dx !== 0 || dy !== 0
     if (dx !== 0) this.player.setFlipX(dx < 0)
@@ -305,6 +381,13 @@ export class WorldScene extends Phaser.Scene {
     }
 
     for (const w of this.wilds.values()) this.thinkWild(w, time)
+
+    const near = this.nearestTrainer()
+    this.talkPrompt.setVisible(!!near)
+    if (near) {
+      this.talkPrompt.setPosition(near.sprite.x, near.sprite.y - 52)
+      if (Phaser.Input.Keyboard.JustDown(k.E) || Phaser.Input.Keyboard.JustDown(k.SPACE)) this.talkTo(near)
+    }
   }
 }
 

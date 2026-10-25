@@ -53,4 +53,7 @@ export const api = {
   visitCenter: (centerId) => request('POST', '/center/visit', { centerId }),
   heal: (centerId) => request('POST', '/center/heal', { centerId }),
   buy: (item, qty) => request('POST', '/mart/buy', { item, qty }),
+  upgrade: (uid, choice) => request('POST', '/upgrade', { uid, choice }),
+  trainerTalk: (trainerId) => request('POST', '/trainer/talk', { trainerId }),
+  trainerBattle: (trainerId) => request('POST', '/trainer/battle', { trainerId }),
 }

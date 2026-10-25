@@ -2,15 +2,17 @@ import { api } from '../api.js'
 import { store } from '../store.js'
 import { h, layer, typeBadge, hpBar, setHp, wait } from '../ui.js'
 import { effectiveness, TYPE_COLORS } from '../../shared/types.js'
+import { chooseUpgrade } from './upgrades.js'
 
 const BALLS = ['pokeball', 'superball', 'ultraball']
 const MEDS = ['potion', 'superpotion', 'revive']
 
-// Runs a whole battle against a spawn. Resolves with the final 'end' event.
-export async function runBattle(spawn) {
+// Runs a whole battle (wild or trainer). `start` makes the server begin or resume it.
+// Resolves with the final 'end' event.
+export async function runBattle(start) {
   let res
   try {
-    res = await api.battleStart(spawn.id)
+    res = await start()
   } catch (err) {
     return { outcome: 'none', error: err.message }
   }
@@ -28,12 +30,14 @@ class BattleUI {
     this.foe = battle.wild
     this.me = state.team.find((m) => m.uid === battle.activeUid)
     this.needSwitch = battle.needSwitch
+    this.trainer = battle.trainer // null in wild battles
+    this.upgradeQueue = []
     this.busy = false
     this.build(battle.biome)
   }
 
   build(biome) {
-    this.foeSprite = h('img.sprite.foe-sprite', { src: this.foe.sprite, alt: '', draggable: 'false' })
+    this.foeSprite = h(`img.sprite.foe-sprite${this.foe.shiny ? '.shiny' : ''}`, { src: this.foe.sprite, alt: '', draggable: 'false' })
     this.meSprite = h('img.sprite.me-sprite', { src: this.me.backSprite, alt: '', draggable: 'false' })
     this.foeCard = h('div.bcard.foe-card')
     this.meCard = h('div.bcard.me-card')
@@ -60,13 +64,15 @@ class BattleUI {
   renderCards() {
     const f = this.foe, m = this.me
     this.foeCard.replaceChildren(
-      h('div.bname', {}, f.name, h('span.blv', {}, `Lv${f.level}`)),
+      this.trainer && h('div.btrainer', {}, this.trainer.name,
+        h('span', {}, Array.from({ length: this.trainer.total }, (_, i) => h(`span.tball${i < this.trainer.total - this.trainer.left ? '.out' : ''}`)))),
+      h('div.bname', {}, (f.shiny ? '✨' : '') + f.name, h('span.blv', {}, `Lv${f.level}`)),
       h('div.btypes', {}, f.types.map(typeBadge)),
       (this.foeHp = hpBar(f.hp, f.maxHp)),
     )
     const xpR = m.xpNext ? (m.xp - m.xpLevelStart) / (m.xpNext - m.xpLevelStart) : 1
     this.meCard.replaceChildren(
-      h('div.bname', {}, m.name, h('span.blv', {}, `Lv${m.level}`)),
+      h('div.bname', {}, (m.shiny ? '✨' : '') + m.name, h('span.blv', {}, `Lv${m.level}`)),
       h('div.btypes', {}, m.types.map(typeBadge)),
       (this.meHp = hpBar(m.hp, m.maxHp)),
       (this.meHpText = h('div.bhpnum', {}, `${Math.max(0, m.hp)} / ${m.maxHp}`)),
@@ -111,6 +117,17 @@ class BattleUI {
       switch (e.t) {
         case 'text':
           await this.say(e.text)
+          while (this.upgradeQueue.length) await chooseUpgrade(this.upgradeQueue.shift())
+          break
+        case 'foeSwitch':
+          this.foe = e.mon
+          this.trainer = { ...this.trainer, left: e.left }
+          this.foeSprite.src = e.mon.sprite
+          this.foeSprite.classList.toggle('shiny', !!e.mon.shiny)
+          this.renderCards()
+          await wait(50)
+          this.foeSprite.classList.remove('fainted')
+          await wait(350)
           break
         case 'attack': {
           const el = e.side === 'wild' ? this.foeSprite : this.meSprite
@@ -162,6 +179,7 @@ class BattleUI {
             if (leveled) {
               this.renderCards()
               this.anim(this.meCard, 'glow', 600)
+              this.upgradeQueue.push(e.mon.uid) // XP bar filled: pause for upgrade cards after the next message
             } else this.setXp(e.mon)
           }
           break
@@ -233,8 +251,8 @@ class BattleUI {
       return this.needSwitch ? this.showParty(true) : this.showMain()
     }
     this.needSwitch = false
+    store.set(res.state) // before playing, so upgrade picks made during playback aren't overwritten
     const end = await this.play(res.events)
-    store.set(res.state)
     if (end) return this.resolveEnd(end)
     if (res.battle?.needSwitch) {
       this.needSwitch = true
@@ -258,7 +276,7 @@ class BattleUI {
       { label: 'FIGHT', onclick: () => this.showMoves(), style: { '--accent': '#e74c3c' } },
       { label: 'BAG', onclick: () => this.showBag(), style: { '--accent': '#f39c12' } },
       { label: 'POKéMON', onclick: () => this.showParty(false), style: { '--accent': '#27ae60' } },
-      { label: 'RUN', onclick: () => this.send({ type: 'run' }), style: { '--accent': '#2980b9' } },
+      { label: 'RUN', onclick: () => this.send({ type: 'run' }), disabled: !!this.trainer, style: { '--accent': '#2980b9' } },
     ])
     this.menu.className = 'bmenu grid2'
   }
@@ -283,7 +301,8 @@ class BattleUI {
       const item = st.items[key]
       const count = st.bag[key] ?? 0
       return h('button.bbtn.item', {
-        disabled: count <= 0,
+        disabled: count <= 0 || (item.kind === 'ball' && !!this.trainer),
+        title: item.kind === 'ball' && this.trainer ? "You can't catch a trainer's Pokémon" : null,
         onclick: () => (item.kind === 'ball' ? this.send({ type: 'ball', item: key }) : this.pickTarget(key)),
       }, h('span.icon', { class: `icon ico-${key}` }), h('span.mname', {}, item.name), h('span.count', {}, `×${count}`))
     })

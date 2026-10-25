@@ -1,34 +1,70 @@
 import { speciesById, MOVES, ITEMS, movesFor, effectiveness } from './data.js'
-import { calcStats, viewMon, setForm, xpForLevel } from './pokemon.js'
+import { calcStats, battleStats, viewMon, setForm, xpForLevel } from './pokemon.js'
+import { clampRatio } from '../../shared/balance.js'
 import { HttpError } from './errors.js'
 import { markCaught, markSeen, addToCollection, respawnAtCenter } from './player.js'
+import { rewardWin, TRAINER_XP_MULT } from './trainers.js'
 
 const pct = (p) => Math.random() < p
 
-export function startBattle(player, spawn) {
+function newBattle(player, fields) {
   const lead = player.team.find((m) => m.hp > 0)
   if (!lead) throw new HttpError(400, 'No conscious Pokémon')
-  player.battle = {
-    wild: spawn.mon,
-    biome: spawn.biome,
-    activeUid: lead.uid,
-    runAttempts: 0,
-    needSwitch: false,
-    turn: 0,
-  }
+  player.battle = { activeUid: lead.uid, runAttempts: 0, needSwitch: false, turn: 0, ...fields }
   player.stats.battles++
-  markSeen(player, spawn.mon.speciesId)
-  return [{ t: 'text', text: `A wild ${speciesById[spawn.mon.speciesId].name} appeared!` }, { t: 'text', text: `Go, ${speciesById[lead.speciesId].name}!` }]
+  markSeen(player, fields.wild.speciesId)
+  return lead
+}
+
+const shinyText = (mon) => (mon.shiny ? [{ t: 'text', text: '✨ Whoa! It\'s a shiny Pokémon! ✨' }] : [])
+
+export function startBattle(player, spawn) {
+  const lead = newBattle(player, { kind: 'wild', wild: spawn.mon, biome: spawn.biome })
+  return [
+    { t: 'text', text: `A wild ${speciesById[spawn.mon.speciesId].name} appeared!` },
+    ...shinyText(spawn.mon),
+    { t: 'text', text: `Go, ${speciesById[lead.speciesId].name}!` },
+  ]
+}
+
+// team[0] goes out first; the rest wait in foeQueue.
+export function startTrainerBattle(player, trainer, team, biome) {
+  const [first, ...rest] = team
+  const lead = newBattle(player, {
+    kind: 'trainer', wild: first, foeQueue: rest, foeTotal: team.length,
+    trainerId: trainer.id, trainerName: trainer.name, trainerCls: trainer.cls, biome,
+  })
+  return [
+    { t: 'text', text: `${trainer.name} wants to battle!` },
+    { t: 'text', text: `${trainer.name} sent out ${speciesById[first.speciesId].name}!` },
+    ...shinyText(first),
+    { t: 'text', text: `Go, ${speciesById[lead.speciesId].name}!` },
+  ]
 }
 
 export function battleView(player) {
   const b = player.battle
   if (!b) return null
-  return { wild: viewMon(b.wild), activeUid: b.activeUid, biome: b.biome, needSwitch: b.needSwitch }
+  return {
+    kind: b.kind,
+    wild: viewMon(b.wild),
+    activeUid: b.activeUid,
+    biome: b.biome,
+    needSwitch: b.needSwitch,
+    trainer: b.kind === 'trainer' ? { name: b.trainerName, cls: b.trainerCls, total: b.foeTotal, left: b.foeQueue.length + (b.wild.hp > 0 ? 1 : 0) } : null,
+  }
 }
 
 const active = (player) => player.team.find((m) => m.uid === player.battle.activeUid)
 const nameOf = (mon) => speciesById[mon.speciesId].name
+
+// Damage uses "game numbers": attack ÷ defense is clamped and upgrade-card power is capped (shared/balance.js).
+function rawDamage(attacker, defender, move) {
+  const a = battleStats(attacker), d = battleStats(defender)
+  const [A, D] = move.category === 'special' ? [a.spa, d.spd] : [a.atk, d.def]
+  const stab = speciesById[attacker.speciesId].types.includes(move.type) ? 1.5 : 1
+  return ((((2 * attacker.level) / 5 + 2) * move.power * clampRatio(A / D)) / 50 + 2) * stab * a.power
+}
 
 function damageFor(attacker, defender, move) {
   const eff = effectiveness(move.type, speciesById[defender.speciesId].types)
@@ -36,32 +72,30 @@ function damageFor(attacker, defender, move) {
     if (eff === 0) return { dmg: 0, eff, crit: false }
     return { dmg: move.effect.fixed === 'level' ? attacker.level : move.effect.fixed, eff: 1, crit: false }
   }
-  const a = calcStats(attacker), d = calcStats(defender)
-  const [A, D] = move.category === 'special' ? [a.spa, d.spd] : [a.atk, d.def]
   const crit = pct(1 / 16)
-  const stab = speciesById[attacker.speciesId].types.includes(move.type) ? 1.5 : 1
-  const base = (((2 * attacker.level) / 5 + 2) * move.power * (A / D)) / 50 + 2
-  const dmg = Math.floor(base * stab * eff * (crit ? 1.5 : 1) * (0.85 + Math.random() * 0.15))
+  const dmg = Math.floor(rawDamage(attacker, defender, move) * eff * (crit ? 1.5 : 1) * (0.85 + Math.random() * 0.15))
   return { dmg: eff === 0 ? 0 : Math.max(1, dmg), eff, crit }
 }
 
-// Expected damage (no randomness) used by the wild AI.
+// Expected damage (no randomness) used by the foe AI.
 function expected(attacker, defender, move) {
   const eff = effectiveness(move.type, speciesById[defender.speciesId].types)
   if (move.effect?.fixed) return eff === 0 ? 0 : move.effect.fixed === 'level' ? attacker.level : move.effect.fixed
-  const a = calcStats(attacker), d = calcStats(defender)
-  const [A, D] = move.category === 'special' ? [a.spa, d.spd] : [a.atk, d.def]
-  const stab = speciesById[attacker.speciesId].types.includes(move.type) ? 1.5 : 1
-  return ((((2 * attacker.level) / 5 + 2) * move.power * (A / D)) / 50 + 2) * stab * eff * (move.acc / 100) * (move.effect?.hits ?? 1)
+  return rawDamage(attacker, defender, move) * eff * (move.acc / 100) * (move.effect?.hits ?? 1)
 }
 
 function sideOf(player, mon) {
   return mon === player.battle.wild ? 'wild' : 'player'
 }
 
+function foeLabel(player, mon) {
+  const b = player.battle
+  return b.kind === 'trainer' ? `${b.trainerName}'s ${nameOf(mon)}` : `The wild ${nameOf(mon)}`
+}
+
 function useMove(player, attacker, defender, move, events) {
   const atkSide = sideOf(player, attacker), defSide = sideOf(player, defender)
-  const who = atkSide === 'wild' ? `The wild ${nameOf(attacker)}` : nameOf(attacker)
+  const who = atkSide === 'wild' ? foeLabel(player, attacker) : nameOf(attacker)
   events.push({ t: 'text', text: `${who} used ${move.name}!` })
   events.push({ t: 'attack', side: atkSide, moveType: move.type })
   if (!pct(move.acc / 100)) {
@@ -108,6 +142,7 @@ function wildMove(player) {
 
 function wildTurn(player, events) {
   const b = player.battle
+  if (!b) return
   const me = active(player)
   if (b.wild.hp <= 0 || me.hp <= 0) return
   useMove(player, b.wild, me, wildMove(player), events)
@@ -121,8 +156,21 @@ function afterHits(player, events) {
   const me = active(player)
   if (b.wild.hp <= 0) {
     events.push({ t: 'faint', side: 'wild' })
-    events.push({ t: 'text', text: `The wild ${nameOf(b.wild)} fainted!` })
+    events.push({ t: 'text', text: `${foeLabel(player, b.wild)} fainted!` })
     if (me.hp > 0) gainXp(player, me, events)
+    if (b.kind === 'trainer') {
+      if (b.foeQueue.length) {
+        b.wild = b.foeQueue.shift()
+        markSeen(player, b.wild.speciesId)
+        events.push({ t: 'foeSwitch', mon: viewMon(b.wild), left: b.foeQueue.length + 1, total: b.foeTotal })
+        events.push({ t: 'text', text: `${b.trainerName} sent out ${nameOf(b.wild)}!` }, ...shinyText(b.wild))
+        return
+      }
+      events.push(...rewardWin(player, b.trainerId, b.trainerName))
+      endBattle(player, 'trainerWin', events)
+      return
+    }
+    player.stats.wins = (player.stats.wins ?? 0) + 1
     const money = b.wild.level * 20
     player.money += money
     events.push({ t: 'money', amount: money, total: player.money })
@@ -143,7 +191,9 @@ function afterHits(player, events) {
 }
 
 function blackout(player, events) {
+  const b = player.battle
   events.push({ t: 'text', text: 'All of your Pokémon have fainted!' })
+  if (b.kind === 'trainer') events.push({ t: 'text', text: `You lost to ${b.trainerName}…` })
   if ((player.bag.revive ?? 0) > 0) {
     player.bag.revive--
     const lead = player.team[0]
@@ -166,13 +216,16 @@ function endBattle(player, outcome, events, extra = {}) {
 }
 
 function gainXp(player, mon, events) {
-  const wild = player.battle.wild
-  const xp = Math.max(1, Math.floor((speciesById[wild.speciesId].baseExp * wild.level) / 7))
+  const b = player.battle
+  const wild = b.wild
+  const mult = b.kind === 'trainer' ? TRAINER_XP_MULT : 1
+  const xp = Math.max(1, Math.floor(((speciesById[wild.speciesId].baseExp * wild.level) / 7) * mult))
   mon.xp += xp
   events.push({ t: 'text', text: `${nameOf(mon)} gained ${xp} XP!` })
   const oldMoves = movesFor(mon.speciesId, mon.level)
   while (mon.level < 100 && mon.xp >= xpForLevel(mon.level + 1)) {
     setForm(mon, { level: mon.level + 1 })
+    player.pendingUpgrades.push(mon.uid) // XP bar filled: the client pauses and shows 3 upgrade cards
     events.push({ t: 'levelup', mon: viewMon(mon) })
     events.push({ t: 'text', text: `${nameOf(mon)} grew to level ${mon.level}!` })
   }
@@ -183,7 +236,7 @@ function gainXp(player, mon, events) {
     const from = nameOf(mon)
     events.push({ t: 'text', text: `What? ${from} is evolving!` })
     setForm(mon, { speciesId: evo.to })
-    markCaught(player, evo.to)
+    markCaught(player, evo.to, mon.shiny)
     events.push({ t: 'evolve', fromId: speciesById[evo.to].evolvesFrom, mon: viewMon(mon) })
     events.push({ t: 'text', text: `Congratulations! ${from} evolved into ${nameOf(mon)}!` })
   }
@@ -206,9 +259,9 @@ function tryCatch(player, itemKey, events) {
   events.push({ t: 'text', text: `You threw a ${item.name}!` })
   events.push({ t: 'ball', item: itemKey, shakes: Math.min(3, shakes), caught })
   if (caught) {
-    events.push({ t: 'text', text: `Gotcha! ${sp.name} was caught!` })
+    events.push({ t: 'text', text: `Gotcha! ${wild.shiny ? '✨ Shiny ' : ''}${sp.name} was caught!` })
     const firstTime = !player.dex.caught.includes(wild.speciesId)
-    markCaught(player, wild.speciesId)
+    markCaught(player, wild.speciesId, wild.shiny)
     player.stats.catches++
     const where = addToCollection(player, wild)
     if (firstTime) events.push({ t: 'text', text: `${sp.name}'s data was added to the Pokédex. (${player.dex.caught.length}/151)` })
@@ -244,7 +297,7 @@ export function act(player, action) {
       const move = MOVES[names[action.index]]
       if (!move) throw new HttpError(400, 'Unknown move')
       const wm = wildMove(player)
-      const mySpe = calcStats(me).spe, wildSpe = calcStats(b.wild).spe
+      const mySpe = battleStats(me).spe, wildSpe = battleStats(b.wild).spe
       const myPri = move.effect?.priority ?? 0, wildPri = wm.effect?.priority ?? 0
       const iFirst = myPri !== wildPri ? myPri > wildPri : mySpe !== wildSpe ? mySpe > wildSpe : pct(0.5)
       const order = iFirst ? [[me, b.wild, move], [b.wild, me, wm]] : [[b.wild, me, wm], [me, b.wild, move]]
@@ -258,6 +311,7 @@ export function act(player, action) {
     case 'ball': {
       const item = ITEMS[action.item]
       if (!item || item.kind !== 'ball') throw new HttpError(400, 'Not a ball')
+      if (b.kind === 'trainer') throw new HttpError(400, "You can't catch another trainer's Pokémon!")
       if (!(player.bag[action.item] > 0)) throw new HttpError(400, `No ${item.name}s left`)
       player.bag[action.item]--
       if (!tryCatch(player, action.item, events)) wildTurn(player, events)
@@ -280,7 +334,8 @@ export function act(player, action) {
       break
     }
     case 'run': {
-      const mySpe = calcStats(me).spe, wildSpe = calcStats(b.wild).spe
+      if (b.kind === 'trainer') throw new HttpError(400, "No! There's no running from a trainer battle!")
+      const mySpe = battleStats(me).spe, wildSpe = battleStats(b.wild).spe
       const ok = mySpe >= wildSpe || pct(0.5 + 0.15 * b.runAttempts)
       b.runAttempts++
       if (ok) {

@@ -1,8 +1,8 @@
-# PRD #5: Poke Arena
+# PRD #5: Pokemon but you are not the main character
 
 | | |
 |---|---|
-| Status | v1 – ready to build |
+| Status | v1.1 – PRD 2 changes applied (see `prd2.md`) |
 | Platform | Desktop web browser (keyboard + mouse) |
 | Stack | Phaser 3 + Vite client, Node game server (runs inside the Vite dev server and standalone) |
 | Data source | PokéAPI (Gen 1 data baked into the server at build time) |
@@ -11,7 +11,7 @@
 
 ## 1. Summary
 
-Poke Arena is a single-player, open-world Pokémon game set in one large, continuous overworld split into biomes. The player picks one of three Gen 1 starters, explores, battles and catches wild Pokémon, and manages a team of up to 5. The player **wins** by catching all 151 Gen 1 Pokémon and **loses** when their whole team faints with no Revives left.
+*Pokemon but you are not the main character* is a single-player, open-world Pokémon game set in one large, continuous overworld split into biomes. The player picks one of three Gen 1 starters, explores, battles and catches wild Pokémon, challenges trainer NPCs, and manages a team of up to 5. The player **wins** by catching all 151 Gen 1 Pokémon and **loses** when their whole team faints with no Revives left.
 
 All game-critical numbers — Pokémon stats, what spawns where, battle results, catch rolls and what the player owns — are decided by the **server**. The browser only draws the world and sends the player's choices.
 
@@ -27,11 +27,16 @@ All game-critical numbers — Pokémon stats, what spawns where, battle results,
 
 | Dex # | Pokémon | Type | Starting level |
 |---|---|---|---|
-| 1 | Bulbasaur | Grass / Poison | 5 |
-| 4 | Charmander | Fire | 5 |
-| 7 | Squirtle | Water | 5 |
+| 60 | Poliwag | Water | 5 |
+| 69 | Bellsprout | Grass / Poison | 5 |
+| 58 | Growlithe | Fire | 5 |
 
-The player chooses one on the New Game screen. The chosen starter counts as **caught** in the Pokédex.
+The player chooses one on the New Game screen. Each card shows the starter's evolution line:
+- Poliwag → Poliwhirl (Lv 25) → Poliwrath (Water Stone)
+- Bellsprout → Weepinbell (Lv 21) → Victreebel (Leaf Stone)
+- Growlithe → Arcanine (Fire Stone)
+
+The chosen starter counts as **caught** in the Pokédex.
 
 ## 4. Core Gameplay Loop
 
@@ -58,10 +63,12 @@ The player chooses one on the New Game screen. The chosen starter counts as **ca
   - Current biome name and its wild level range
   - Money (₽)
   - Pokédex progress: `Caught X / 151`
+  - Score (see §13.1)
   - Team strip: the 5 team slots with a mini sprite and HP bar each
-  - **Minimap** (top-right): biome colours, Poké Centers, player position
+  - **Minimap** (top-right): biome colours, Poké Centers, trainers, player position
   - Hints: `B` Backpack, `M` toggle minimap
 - Walking onto a Poké Center opens the Poké Center panel.
+- Trainer NPCs stand in the world with their name and a mark above them (`!` = not beaten yet, `✓` = beaten). Standing next to one shows an **E Talk** prompt (§8.1).
 - Short toasts for events ("Saved", "Entered Swamp").
 
 ### 5.3 Battle Screen
@@ -73,18 +80,23 @@ The player chooses one on the New Game screen. The chosen starter counts as **ca
   - BAG: Poké Balls (throw) and medicine (use on a team member).
   - POKéMON: switch to another conscious team member (uses your turn). Forced and free when the active Pokémon faints.
   - RUN: try to escape.
-- Animations: attack lunge, hit flash, HP drain, faint drop, ball throw with 0–3 shakes, catch confirmation.
+- Animations: attack lunge, hit flash, HP drain, faint drop, ball throw with 0–3 shakes, catch confirmation, shiny sparkle.
+- In trainer battles the foe card also shows the trainer's name and one ball per Pokémon (greyed out once fainted). Poké Balls and RUN are disabled.
+- **Level-up upgrade cards:** when the active Pokémon's XP bar fills, the battle pauses after the "grew to level N!" message and shows 3 cards (§8.2). Picking one (click or keys 1–3) resumes the battle.
 
 ### 5.4 Backpack
 Opened with `B` or the HUD button (not available during battle). It has four tabs:
-- **Items** – each item's count and description; Potions / Super Potions / Revives can be used on a team member.
+- **Items** – each item's count and description; Potions / Super Potions / Revives can be used on a team member. Evolution stones can be used on any team or Box Pokémon they evolve.
 - **Team** – the 5 team slots with full details (stats, moves, XP to next level). Reorder with ▲/▼ (slot 1 leads in battle), or send a member to the Box (at least one conscious Pokémon must stay on the team).
 - **Box (PC)** – every caught Pokémon not on the team. Move one to the team if there is a free slot.
-- **Pokédex** – a grid of #001–#151. Unseen entries show `???`, seen ones show a silhouette, caught ones show the full sprite, types and the biomes it lives in.
+- **Pokédex** – a grid of #001–#151. Unseen entries show `???`, seen ones show a silhouette, caught ones show the full sprite, types, habitats, rarity tier (Common / Uncommon / Rare / Very rare / Legendary), base stats and how it evolves. ✨ marks species caught shiny. For every Pokémon of that species the player owns (team or Box), it shows the **exact stats**: level, current/max HP, each stat value, each IV and its upgrade-card bonuses.
 
 ### 5.5 Extra overlays (not separate screens)
-- **Poké Center panel** – Heal team, Poké Mart (buy items), Close.
-- **Game Over** – shown when the lose condition is met. The save is closed and the only option is New Game.
+- **Poké Center panel** – Heal team (free, once every 3 minutes, with a countdown), Poké Mart (buy items), Close.
+- **Trainer dialog** – the trainer's portrait, a line of dialogue, their team size and level, the prize, and Battle / Rematch / Not now (or a rematch countdown).
+- **Upgrade cards** – see §8.2. Any picks still pending (e.g. after a reload) are shown when the world loads.
+- **Team Down** – shown when the whole team hits 0 HP but a Revive saves the run: the score breakdown (§13.1) and Continue.
+- **Game Over** – shown when the lose condition is met, with the final score breakdown. The save is closed and the only option is New Game.
 - **Victory** – shown the moment the 151st species is caught. It shows stats (time played, battles, catches) and lets the player keep exploring.
 
 ## 6. World & Biomes
@@ -94,7 +106,8 @@ Opened with `B` or the HUD button (not available during battle). It has four tab
 - The map is generated from a **world seed** chosen by the server for each save. The same seed always gives the same world, and the server and client run the same shared generator, so the server always knows the biome of any tile.
 - **Starting Town** is in the centre: a cleared plaza with the first Poké Center.
 - About **15 Poké Centers** are spread across the map on a jittered grid, so every biome has at least one.
-- Tiles are either walkable ground or blocking (water, trees, boulders, dead trees, lava rocks). Obstacles are sparse enough that land areas stay connected.
+- Tiles are either walkable (ground, **shallow water**) or blocking (deep ocean, swamp ponds, trees, boulders, dead trees, lava rocks). Obstacles are sparse enough that land areas stay connected.
+- About **40 trainer NPCs** are placed from the seed: one near every Poké Center, two just outside Starting Town, and the rest on a scattered grid. A trainer only stands on a tile whose 8 neighbours are all walkable, so trainers never block a path.
 
 ### 6.2 Biomes
 Biomes come from noise layers for elevation, temperature (colder to the north, hotter to the south) and moisture.
@@ -103,11 +116,14 @@ Biomes come from noise layers for elevation, temperature (colder to the north, h
 |---|---|---|---|
 | Meadow | Mild, average moisture | Bright grass, flowers, few trees | Normal, Flying, Electric, Bug, Grass |
 | Forest | Mild, wet | Dark grass, dense trees | Grass, Bug, Poison, Psychic, Normal |
-| Swamp | Very wet, low-lying | Murky green-brown mud, dead trees | Poison, Ghost, Water, Grass |
-| Snowfield | Cold north | White snow, pines | Ice, Water, Psychic |
+| Swamp | Very wet, low-lying | Murky green-brown mud, dead trees | Poison, Ghost, Grass |
+| Snowfield | Cold north | White snow, pines | Ice, Psychic |
 | Mountain | High elevation | Grey rock, boulders | Rock, Ground, Fighting, Psychic, Electric, Dragon |
 | Volcano | Hot, dry south | Dark ash, lava rocks | Fire, Rock, Ground |
-| Lakeshore | Next to water | Sand beaches | Water, Flying, Dragon |
+| Lakeshore | Next to water | Sand beaches | Flying, Normal, Ground, Electric |
+| Water | Shallow water between the deep ocean and the shore (walkable) | Light blue water | Water, Dragon |
+
+**Pokémon that live in water never appear on land.** Every species with the Water type (including dual types such as Lapras or Gyarados) spawns only in the Water biome. The only other Pokémon in the water are Dragons. On the overworld, water Pokémon can't wander out of the water, and land Pokémon can't wander into it.
 
 All 15 Gen 1 types appear in at least one biome, so **every one of the 151 species can be found in the wild somewhere.**
 
@@ -126,6 +142,7 @@ For each of the 151 species: Dex number, name, **Gen 1 types** (e.g. Clefairy is
   - HP = ⌊(2·Base + IV)·L/100⌋ + L + 10
   - Other stats = ⌊(2·Base + IV)·L/100⌋ + 5
 - XP curve is "medium fast": XP needed to reach level L = L³.
+- **Shiny:** every new Pokémon (wild, trainer-owned or starter) has a **1 in 128** chance to be shiny. Shinies use the shiny sprites, show ✨ next to their name and level label, sparkle when they appear in battle, and are worth extra score. Being shiny doesn't change stats.
 
 ### 7.3 Moves
 - There is a move pool for each type. Each move has a level it is learned at, power, accuracy and a Gen 1-style category: Fire, Water, Grass, Electric, Ice, Psychic and Dragon moves are **special**; everything else is **physical**.
@@ -134,19 +151,51 @@ For each of the 151 species: Dex number, name, **Gen 1 types** (e.g. Clefairy is
 
 ### 7.4 Evolution
 - When a Pokémon reaches its species' evolution level it evolves at the end of battle. It keeps its IVs, its HP stays at the same percentage and the new species is marked caught.
-- Evolutions by stone, trade or friendship don't exist in v1. Those species (e.g. Raichu, Alakazam, Vaporeon) can only be caught in the wild.
+- **Stone evolutions:** using a stone from the Backpack evolves a matching Pokémon immediately (same IV/HP rules):
+
+| Stone | Evolves |
+|---|---|
+| Fire Stone | Vulpix → Ninetales, Growlithe → Arcanine, Eevee → Flareon |
+| Water Stone | Poliwhirl → Poliwrath, Shellder → Cloyster, Staryu → Starmie, Eevee → Vaporeon |
+| Thunder Stone | Pikachu → Raichu, Eevee → Jolteon |
+| Leaf Stone | Gloom → Vileplume, Weepinbell → Victreebel, Exeggcute → Exeggutor |
+| Moon Stone | Nidorina → Nidoqueen, Nidorino → Nidoking, Clefairy → Clefable, Jigglypuff → Wigglytuff |
+
+- Trade and friendship evolutions still don't exist. Those species (e.g. Alakazam, Gengar) can only be caught in the wild.
 
 ## 8. Battle System (server-decided)
 
-- One-on-one wild battles.
+- One-on-one battles against a wild Pokémon or a trainer's team (§8.1).
 - **Turn order:** priority first, then higher Speed, with random tie-breaks. Items, balls, switching and running always go before the wild Pokémon's move.
-- **Damage:** `((2L/5 + 2) · Power · A/D) / 50 + 2`, multiplied by STAB (1.5), type effectiveness (Gen 1 chart with Ghost → Psychic fixed to 2×), a critical hit (1/16 chance, 1.5×) and a random factor of 0.85–1.00. Minimum 1 damage unless the target is immune.
+- **Damage:** `((2L/5 + 2) · Power · clamp(A/D, 1/3, 3)) / 50 + 2`, multiplied by the attacker's upgrade power (§8.2), STAB (1.5), type effectiveness (Gen 1 chart with Ghost → Psychic fixed to 2×), a critical hit (1/16 chance, 1.5×) and a random factor of 0.85–1.00. Minimum 1 damage unless the target is immune.
 - **Accuracy:** each move rolls against its accuracy.
 - **Wild AI:** picks a move at random, weighted towards higher expected damage.
 - **Running:** succeeds automatically if your Speed ≥ theirs; otherwise the chance is 50% + 15% per earlier failed attempt in this battle.
 - **XP:** `baseXP · wildLevel / 7` goes to the Pokémon that knocked out the wild Pokémon.
 - **Money:** ₽ `wildLevel × 20` for knocking out a wild Pokémon.
 - **Fainting:** a fainted Pokémon can't battle until revived. When the active Pokémon faints and there is another conscious one, the player must switch.
+- **Turn order and running** use Speed *with* upgrade bonuses.
+
+### 8.1 Trainer battles
+- Walk up to a trainer and press **E** (or Space) to talk. A trainer you haven't beaten offers a battle; the server checks that you are within 3 tiles.
+- **Team:** 2 Pokémon below Lv 10, 3 below Lv 25, otherwise 4. Species fit the trainer's class (Bug Catcher → Bug, Hiker → Rock/Ground, Swimmer → Water…) and are seeded by world + trainer, so a trainer always uses the same species. Levels are the zone level, with the last Pokémon (the ace) 1–2 levels higher; level-up evolutions are applied.
+- No catching and no running. The trainer sends out the next Pokémon when one faints. XP from trainer Pokémon is **×1.5**, and there's no per-knockout money.
+- **First win:** ₽500–750 (rolled by the server).
+- **Rematch:** after a win the trainer rests for **5 minutes**, then can be asked for a rematch. Rematch teams are +3 levels per previous win (max +15). A rematch win pays **₽125–250** and has a **12%** chance that the trainer also gifts a random evolution stone.
+- Losing works like any team wipe (§13); the trainer stays beatable.
+
+### 8.2 Level-up upgrade cards ("game numbers")
+Each level gained queues one pick on the server. The client pauses and shows three cards:
+
+| Card | Effect | Scope | Limit |
+|---|---|---|---|
+| More Damage | Multiplies all damage this Pokémon deals | That Pokémon | +50% |
+| Faster Attacks | Multiplies this Pokémon's Speed (moves first more often) | That Pokémon | +50% |
+| Faster Walking | Multiplies overworld walk/run speed | The player | +40% |
+
+- Bonus per card = `limit × (1 − 0.85^picks)`: the first pick gives +7.5% damage, and the bonus never reaches the limit.
+- Together with the clamped Attack ÷ Defense ratio, this turns raw stats into capped game numbers, so no Pokémon becomes too strong.
+- Picks are validated by the server (`POST /api/upgrade`) and can be made mid-battle.
 
 ## 9. Capturing
 
@@ -171,6 +220,7 @@ For each of the 151 species: Dex number, name, **Gen 1 types** (e.g. Clefairy is
 | Potion | Restore 20 HP | ₽300 | 3 |
 | Super Potion | Restore 60 HP | ₽700 | 1 |
 | Revive | Revive a fainted Pokémon to 50% HP | ₽1,500 | 3 |
+| Fire / Water / Thunder / Leaf / Moon Stone | Evolve specific Pokémon (§7.4) | ₽2,200 each | 0 |
 
 Starting money: ₽3,000.
 
@@ -180,7 +230,7 @@ Starting money: ₽3,000.
 - At least one conscious Pokémon must stay on the team when moving others to the Box.
 
 ## 12. Poké Centers & Economy
-- **Heal:** restores full HP to every **conscious** team member, for free. **Fainted Pokémon are not revived at Poké Centers; only Revives bring them back.** This keeps Revives meaningful as "lives".
+- **Heal:** restores full HP to the whole team at once, for free, but only **once every 3 minutes** (server-enforced; the button shows a countdown). **Fainted Pokémon are not revived at Poké Centers; only Revives bring them back.** This keeps Revives meaningful as "lives".
 - **Poké Mart:** buy any item from §10 with money.
 - Visiting a Center makes it the respawn point.
 
@@ -190,6 +240,17 @@ Starting money: ₽3,000.
 At the end of any battle in which **every team member has fainted**:
 - If the player has **at least 1 Revive**, one is used automatically on the lead Pokémon (back at 50% HP) and the player is sent back to the last Poké Center they visited.
 - If the player has **0 Revives**, it's **Game Over**: the save is marked finished and the Game Over overlay appears.
+
+### 13.1 Score
+When the whole team hits 0 HP, the score is shown on the Team Down screen (Revive used) or the Game Over screen. The HUD also shows it.
+
+| Source | Points |
+|---|---|
+| Species caught | 100 each |
+| Trainer battles won (incl. rematches) | 50 each |
+| Wild Pokémon defeated | 10 each |
+| Pokémon caught | 5 each |
+| Shiny Pokémon owned | 250 each |
 
 ### Win
 - Catch all **151** species (evolving into a species counts). The Victory overlay appears once, and the player can keep playing afterwards.
@@ -208,7 +269,8 @@ The client never sends stats or results, only intentions ("use move 2", "throw a
 
 ### 14.1 Spawn weighting
 `weight(species, biome) = rarity × affinity × levelGate`
-- `rarity` = catchRate / 255
+- `rarity` = (catchRate / 255)^1.25 × (300 / base stat total)². Rare species (low catch rate) and strong species (high base stats) are both much less common: Pidgey ≈ 1.4, Dratini ≈ 0.11, Snorlax ≈ 0.017.
+- Water types get weight 0 outside the Water biome, and non-Water, non-Dragon species get weight 0 inside it.
 - `affinity` = the highest biome affinity among the species' types (0 means it never spawns in that biome)
 - `levelGate` = 1 if the zone level ≥ the species' natural minimum level, otherwise 0.1
 - **Legendaries** (Articuno – Snowfield, Zapdos – Mountain, Moltres – Volcano, Mewtwo – Mountain, Mew – Forest) only spawn in their own biome, in zones of level 35 and above, with a fixed small weight.
@@ -224,11 +286,14 @@ The client never sends stats or results, only intentions ("use move 2", "throw a
 | `POST /api/spawn` | Ask for a wild spawn at tile `{tx, ty}` → spawn or `null` |
 | `POST /api/battle/start` | Start a battle with a spawn `{spawnId}` |
 | `POST /api/battle/action` | `{type: move\|ball\|item\|switch\|run, …}` → `{events, battle, state}` |
-| `POST /api/item/use` | Use medicine outside battle `{item, uid}` |
+| `POST /api/item/use` | Use medicine or an evolution stone outside battle `{item, uid}` |
 | `POST /api/team/move` | Move a Pokémon between team and box `{uid, to}` |
 | `POST /api/team/order` | Reorder the team `{uids}` |
 | `POST /api/center/heal` | Heal at a center `{centerId}` |
 | `POST /api/mart/buy` | Buy `{item, qty}` |
+| `POST /api/upgrade` | Pick a level-up upgrade card `{uid, choice}` (damage, speed or walk) |
+| `POST /api/trainer/talk` | Trainer status `{trainerId}` → wins, rematch cooldown, team size, level |
+| `POST /api/trainer/battle` | Start a trainer battle or rematch `{trainerId}` |
 
 ## 15. Controls
 
@@ -236,6 +301,8 @@ The client never sends stats or results, only intentions ("use move 2", "throw a
 |---|---|
 | WASD / Arrow keys | Move |
 | Shift (hold) | Run (1.6× speed) |
+| E / Space (next to a trainer) | Talk to the trainer |
+| 1 / 2 / 3 | Pick an upgrade card |
 | B | Open / close the Backpack |
 | M | Toggle the minimap |
 | Space / Enter / click | Advance battle text, confirm |
@@ -268,12 +335,21 @@ src/                   – Phaser world scene + DOM screens (title, battle, back
 7. A team wipe with Revives uses one and respawns you; a team wipe with no Revives ends the game.
 8. Catching the 151st species shows the Victory overlay.
 9. Editing client code or requests can't change stats or catch results (the server validates everything).
+10. Common, weak species are far more common than rare or high-stat ones.
+11. Free healing works once, then shows a 3-minute countdown.
+12. Water-type Pokémon only appear (and stay) in the Water biome.
+13. The Pokédex shows the exact stats and IVs of every owned Pokémon of a species.
+14. Trainers can be battled; a first win pays ₽500–750, a rematch (after 5 minutes) pays ₽125–250 and sometimes gifts a stone.
+15. Each level-up pauses on 3 upgrade cards; bonuses never exceed their limits.
+16. The title reads "Pokemon but you are not the main character" and the starters are Poliwag, Bellsprout and Growlithe.
+17. All five stones are sold for ₽2,200 and evolve the right species.
+18. Shiny Pokémon appear at a 1/128 rate with shiny sprites.
 
 ## 18. Out of Scope (v1)
 1. Gen 2 or later Pokémon.
 2. Gen 2 or later types (Dark, Steel, Fairy).
 3. Status conditions (poison, sleep, paralysis…) and stat-changing moves.
-4. Trainer battles, gyms, NPC dialogue and a story.
-5. Stone, trade and friendship evolutions.
+4. Gyms and a story (trainer NPCs exist, but only with short battle dialogue).
+5. Trade and friendship evolutions.
 6. Multiplayer, trading and accounts (a save is tied to a browser through a random player id).
 7. Mobile and touch controls, audio.

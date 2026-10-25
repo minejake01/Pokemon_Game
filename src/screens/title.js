@@ -2,11 +2,15 @@ import { api, getPlayerId, setPlayerId } from '../api.js'
 import { h, layer, typeBadge } from '../ui.js'
 
 const STARTERS = [
-  { id: 1, name: 'Bulbasaur', types: ['grass', 'poison'], blurb: 'Tough and steady. Great against Water and Rock.' },
-  { id: 4, name: 'Charmander', types: ['fire'], blurb: 'Fast and fierce. Burns through Grass, Bug and Ice.' },
-  { id: 7, name: 'Squirtle', types: ['water'], blurb: 'Sturdy shell. Douses Fire, Rock and Ground.' },
+  { id: 60, name: 'Poliwag', types: ['water'], blurb: 'Bouncy and tough. Douses Fire, Rock and Ground.',
+    evos: [{ id: 61, name: 'Poliwhirl', how: 'Lv 25' }, { id: 62, name: 'Poliwrath', how: 'Water Stone' }] },
+  { id: 69, name: 'Bellsprout', types: ['grass', 'poison'], blurb: 'Hits hard for its size. Great against Water and Rock.',
+    evos: [{ id: 70, name: 'Weepinbell', how: 'Lv 21' }, { id: 71, name: 'Victreebel', how: 'Leaf Stone' }] },
+  { id: 58, name: 'Growlithe', types: ['fire'], blurb: 'Loyal and fierce. Burns through Grass, Bug and Ice.',
+    evos: [{ id: 59, name: 'Arcanine', how: 'Fire Stone' }] },
 ]
 const art = (id) => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/${id}.png`
+const icon = (id) => `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`
 
 // Resolves with the player state once the player continues or starts a new game.
 export function showTitle() {
@@ -35,8 +39,8 @@ export function showTitle() {
       root.replaceChildren(
         h('div.title-bg'),
         h('div.title-inner', {},
-          h('h1.logo', {}, 'POKé', h('span', {}, 'ARENA')),
-          h('p.tagline', {}, 'An open-world adventure. Catch all 151!'),
+          h('h1.logo', {}, 'POKéMON', h('span.logo-sub', {}, 'but you are not the main character')),
+          h('p.tagline', {}, 'Just another trainer in a big open world. Catch all 151!'),
           h('div.title-starters', {}, STARTERS.map((s) => h('img', { src: art(s.id), alt: s.name }))),
           h('div.title-menu', {},
             save && h('button.btn.primary.big', { onclick: () => finish(save) }, `Continue — ${save.name} (${save.dex.caught.length}/151)`),
@@ -64,7 +68,8 @@ export function showTitle() {
           go.disabled = false
           go.textContent = `Begin with ${s.name}!`
         } },
-        h('img', { src: art(s.id), alt: s.name }), h('b', {}, s.name), h('div.btypes', {}, s.types.map(typeBadge)), h('small', {}, s.blurb))
+        h('img', { src: art(s.id), alt: s.name }), h('b', {}, s.name), h('div.btypes', {}, s.types.map(typeBadge)), h('small', {}, s.blurb),
+        h('div.evo-line', {}, s.evos.map((e) => h('span.evo', { title: `${e.name} (${e.how})` }, '→', h('img', { src: icon(e.id), alt: e.name }), h('small', {}, e.how)))))
         return card
       })
       async function start() {

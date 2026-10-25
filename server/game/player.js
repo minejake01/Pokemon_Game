@@ -1,9 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { getWorld, isGoodSeed, TOWN, TILE } from '../../shared/world.js'
-import { speciesById, STARTERS, STARTING_BAG, STARTING_MONEY, TEAM_MAX, ITEMS } from './data.js'
-import { createMon, viewMon, calcStats } from './pokemon.js'
+import { speciesById, STARTERS, STARTING_BAG, STARTING_MONEY, TEAM_MAX, ITEMS, STONE_EVOS } from './data.js'
+import { createMon, viewMon, calcStats, setForm } from './pokemon.js'
 import { HttpError } from './errors.js'
+import { UPGRADES, upgradeBonus } from '../../shared/balance.js'
+
+export const FREE_HEAL_COOLDOWN_MS = 3 * 60_000
 
 const SAVE_DIR = new URL('../saves/', import.meta.url)
 mkdirSync(SAVE_DIR, { recursive: true })
@@ -17,13 +20,30 @@ export function loadPlayer(id) {
   if (players.has(id)) return players.get(id)
   const f = saveFile(id)
   if (!existsSync(f)) return null
-  const p = JSON.parse(readFileSync(f, 'utf8'))
+  const p = migrate(JSON.parse(readFileSync(f, 'utf8')))
   players.set(id, p)
   return p
 }
 
 export function savePlayer(p) {
   writeFileSync(saveFile(p.id), JSON.stringify(p))
+}
+
+// Fills in fields added after a save was created.
+function migrate(p) {
+  p.trainers ??= {}
+  p.upgrades ??= { walk: 0 }
+  p.pendingUpgrades ??= []
+  p.lastFreeHealAt ??= 0
+  p.dex.shiny ??= []
+  p.stats.wins ??= 0
+  p.stats.trainerWins ??= 0
+  for (const m of [...p.team, ...p.box]) {
+    m.shiny ??= false
+    m.boosts ??= { damage: 0, speed: 0 }
+  }
+  if (p.battle) p.battle.kind ??= 'wild'
+  return p
 }
 
 function pickSeed() {
@@ -37,25 +57,30 @@ export function newPlayer(name, starter) {
   name = String(name ?? '').trim().slice(0, 12)
   if (!name) throw new HttpError(400, 'Enter a trainer name')
   starter = Number(starter)
-  if (!STARTERS.includes(starter)) throw new HttpError(400, 'Pick Bulbasaur, Charmander or Squirtle')
+  if (!STARTERS.includes(starter)) throw new HttpError(400, 'Pick Poliwag, Bellsprout or Growlithe')
   const seed = pickSeed()
+  const first = createMon(starter, 5)
   const p = {
     id: randomUUID(),
     name,
     seed,
     createdAt: Date.now(),
-    team: [createMon(starter, 5)],
+    team: [first],
     box: [],
     bag: { ...STARTING_BAG },
     money: STARTING_MONEY,
-    dex: { seen: [starter], caught: [starter] },
+    dex: { seen: [starter], caught: [starter], shiny: first.shiny ? [starter] : [] },
     pos: { x: (TOWN.x + 0.5) * TILE, y: (TOWN.y + 1.5) * TILE },
     lastCenter: 'c0',
     spawns: {},
     battle: null,
     gameOver: false,
     won: false,
-    stats: { battles: 0, catches: 0, playMs: 0 },
+    stats: { battles: 0, catches: 0, playMs: 0, wins: 0, trainerWins: 0 },
+    trainers: {}, // trainerId -> { wins, lastWinAt }
+    upgrades: { walk: 0 }, // player-wide upgrade stacks
+    pendingUpgrades: [], // one uid per level-up still waiting for an upgrade card pick
+    lastFreeHealAt: 0,
   }
   players.set(p.id, p)
   savePlayer(p)
@@ -66,9 +91,10 @@ export function markSeen(p, id) {
   if (!p.dex.seen.includes(id)) p.dex.seen.push(id)
 }
 
-export function markCaught(p, id) {
+export function markCaught(p, id, shiny = false) {
   markSeen(p, id)
   if (!p.dex.caught.includes(id)) p.dex.caught.push(id)
+  if (shiny && !p.dex.shiny.includes(id)) p.dex.shiny.push(id)
   if (p.dex.caught.length >= 151 && !p.won) {
     p.won = true
     p.wonAt = Date.now()
@@ -92,6 +118,19 @@ export function respawnAtCenter(p) {
   return p.pos
 }
 
+// Score shown when the team hits 0 HP (and on Game Over).
+export function scoreOf(p) {
+  const shinies = [...p.team, ...p.box].filter((m) => m.shiny).length
+  const parts = [
+    ['Species caught', p.dex.caught.length, 100],
+    ['Trainers defeated', p.stats.trainerWins ?? 0, 50],
+    ['Wild Pokémon defeated', p.stats.wins ?? 0, 10],
+    ['Pokémon caught', p.stats.catches, 5],
+    ['Shiny Pokémon owned', shinies, 250],
+  ].map(([label, count, each]) => ({ label, count, each, points: count * each }))
+  return { total: parts.reduce((s, x) => s + x.points, 0), parts }
+}
+
 export function viewState(p) {
   return {
     id: p.id,
@@ -109,6 +148,11 @@ export function viewState(p) {
     won: p.won,
     stats: { ...p.stats, playMs: p.stats.playMs },
     inBattle: !!p.battle,
+    score: scoreOf(p),
+    healCooldownMs: Math.max(0, p.lastFreeHealAt + FREE_HEAL_COOLDOWN_MS - Date.now()),
+    upgrades: { walk: p.upgrades.walk, walkBonus: upgradeBonus('walk', p.upgrades.walk) },
+    pendingUpgrades: p.pendingUpgrades,
+    trainers: Object.fromEntries(Object.entries(p.trainers).map(([id, r]) => [id, r.wins])),
   }
 }
 
@@ -152,6 +196,12 @@ export function healAtCenter(p, centerId) {
   if (p.battle) throw new HttpError(400, 'Not during a battle')
   nearCenter(p, centerId)
   p.lastCenter = centerId
+  const wait = p.lastFreeHealAt + FREE_HEAL_COOLDOWN_MS - Date.now()
+  if (wait > 0) {
+    const sec = Math.ceil(wait / 1000)
+    throw new HttpError(400, `Free healing is recharging. Try again in ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}.`)
+  }
+  p.lastFreeHealAt = Date.now()
   let fainted = 0
   for (const m of p.team) {
     if (m.hp > 0) m.hp = calcStats(m).hp
@@ -174,6 +224,38 @@ export function buy(p, itemKey, qty) {
   if (p.money < cost) throw new HttpError(400, 'Not enough money')
   p.money -= cost
   p.bag[itemKey] = (p.bag[itemKey] ?? 0) + qty
+}
+
+// --- Level-up upgrade cards -----------------------------------------------------
+
+const findMon = (p, uid) => p.team.find((m) => m.uid === uid) ?? p.box.find((m) => m.uid === uid)
+
+export function applyUpgrade(p, uid, choice) {
+  const i = p.pendingUpgrades.indexOf(uid)
+  if (i < 0) throw new HttpError(400, 'No upgrade waiting for that Pokémon')
+  if (!UPGRADES[choice]) throw new HttpError(400, 'Unknown upgrade')
+  const mon = findMon(p, uid)
+  p.pendingUpgrades.splice(i, 1)
+  if (UPGRADES[choice].scope === 'player') p.upgrades.walk++
+  else if (mon) mon.boosts[choice]++
+  return mon
+}
+
+// --- Evolution stones ------------------------------------------------------------
+
+export function useStone(p, itemKey, uid) {
+  const item = ITEMS[itemKey]
+  if (!item || item.kind !== 'stone') throw new HttpError(400, 'That is not an evolution stone')
+  if (!(p.bag[itemKey] > 0)) throw new HttpError(400, `No ${item.name}s left`)
+  const mon = findMon(p, uid)
+  if (!mon) throw new HttpError(400, 'Choose one of your Pokémon')
+  const to = STONE_EVOS[itemKey][mon.speciesId]
+  const from = speciesById[mon.speciesId].name
+  if (!to) throw new HttpError(400, `The ${item.name} has no effect on ${from}.`)
+  p.bag[itemKey]--
+  setForm(mon, { speciesId: to })
+  markCaught(p, to, mon.shiny)
+  return [{ t: 'evolve', mon: viewMon(mon) }, { t: 'text', text: `Congratulations! ${from} evolved into ${speciesById[to].name}!` }]
 }
 
 export const speciesName = (id) => speciesById[id].name

@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { getWorld, isWalkable, spawnBiome, zoneLevel, distFromTown, TILE, MAP_W, MAP_H } from '../shared/world.js'
-import { SPECIES, spriteUrl } from './game/data.js'
-import { createMon } from './game/pokemon.js'
+import { SPECIES, speciesById, spriteUrl, bst, rarityTier, STONE_EVOS, ITEMS } from './game/data.js'
+import { createMon, viewMon } from './game/pokemon.js'
 import { rollSpecies, rollLevel, habitats } from './game/encounters.js'
-import { startBattle, act, battleView, useMedicine } from './game/battle.js'
+import { startBattle, startTrainerBattle, act, battleView, useMedicine } from './game/battle.js'
+import { findTrainer, trainerStatus, assertCanBattle, buildTeam } from './game/trainers.js'
 import { HttpError } from './game/errors.js'
 import {
-  loadPlayer, savePlayer, newPlayer, viewState, moveMon, reorderTeam, healAtCenter, visitCenter, buy,
+  loadPlayer, savePlayer, newPlayer, viewState, moveMon, reorderTeam, healAtCenter, visitCenter, buy, applyUpgrade, useStone,
 } from './game/player.js'
 
 const MAX_SPAWNS = 24
@@ -14,7 +15,17 @@ const lastSeen = new Map()
 
 const DEX = (() => {
   const hab = habitats()
-  return SPECIES.map((s) => ({ id: s.id, name: s.name, types: s.types, sprite: spriteUrl(s.id), habitats: hab[s.id] ?? [], legendary: s.legendary }))
+  // How each species evolves, by level or by stone.
+  const evolutions = {}
+  for (const s of SPECIES) for (const e of s.evolvesTo) (evolutions[s.id] ??= []).push({ to: e.to, name: speciesById[e.to].name, level: e.level })
+  for (const [stone, map] of Object.entries(STONE_EVOS)) {
+    for (const [from, to] of Object.entries(map)) (evolutions[from] ??= []).push({ to, name: speciesById[to].name, item: ITEMS[stone].name })
+  }
+  return SPECIES.map((s) => ({
+    id: s.id, name: s.name, types: s.types, sprite: spriteUrl(s.id), shinySprite: spriteUrl(s.id, true),
+    habitats: hab[s.id] ?? [], legendary: s.legendary, base: s.base, bst: bst(s), rarity: rarityTier(s),
+    evolutions: evolutions[s.id] ?? [],
+  }))
 })()
 
 async function readBody(req) {
@@ -75,12 +86,16 @@ const routes = {
     const zl = zoneLevel(tx, ty)
     const speciesId = rollSpecies(biome, zl)
     const mon = createMon(speciesId, rollLevel(zl))
+    const sp = SPECIES[speciesId - 1]
     const id = randomUUID()
     const ids = Object.keys(p.spawns)
     if (ids.length >= MAX_SPAWNS) delete p.spawns[ids[0]]
     p.spawns[id] = { id, mon, biome, tx, ty }
     return {
-      spawn: { id, speciesId, name: SPECIES[speciesId - 1].name, level: mon.level, sprite: spriteUrl(speciesId), tx, ty, aggressive: Math.random() < 0.4 },
+      spawn: {
+        id, speciesId, name: sp.name, level: mon.level, sprite: spriteUrl(speciesId, mon.shiny), shiny: mon.shiny,
+        aquatic: biome === 'water', tx, ty, aggressive: Math.random() < 0.4,
+      },
     }
   },
 
@@ -107,9 +122,30 @@ const routes = {
 
   'POST /item/use': (req, body, p) => {
     if (p.battle) throw new HttpError(400, 'Use items from the battle menu')
-    const events = []
-    useMedicine(p, body.item, body.uid, events)
+    let events = []
+    if (ITEMS[body.item]?.kind === 'stone') events = useStone(p, body.item, body.uid)
+    else useMedicine(p, body.item, body.uid, events)
     return { events, state: viewState(p), save: true }
+  },
+
+  // Level-up upgrade card pick: {uid, choice: damage|speed|walk}. Allowed mid-battle.
+  'POST /upgrade': (req, body, p) => {
+    const mon = applyUpgrade(p, body.uid, body.choice)
+    return { state: viewState(p), mon: mon ? viewMon(mon) : null, save: true }
+  },
+
+  'POST /trainer/talk': (req, body, p) => {
+    const t = findTrainer(p, body.trainerId)
+    return { trainer: trainerStatus(p, t) }
+  },
+
+  'POST /trainer/battle': (req, body, p) => {
+    if (p.battle) throw new HttpError(400, 'You are already in a battle')
+    const t = findTrainer(p, body.trainerId)
+    assertCanBattle(p, t)
+    const biome = spawnBiome(getWorld(p.seed), t.x, t.y)
+    const events = startTrainerBattle(p, t, buildTeam(p, t), biome)
+    return { events, battle: battleView(p), state: viewState(p), save: true }
   },
 
   'POST /team/move': (req, body, p) => {

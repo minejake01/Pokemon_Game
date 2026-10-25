@@ -9,6 +9,7 @@ export function createHud({ onBackpack }) {
   const zone = h('small')
   const cash = h('span.hud-chip')
   const caught = h('span.hud-chip')
+  const score = h('span.hud-chip', { title: 'Score' })
   const team = h('div.hud-team')
   const mapBase = h('canvas', { width: MAP_W * SCALE, height: MAP_H * SCALE })
   const mapDot = h('canvas', { width: MAP_W * SCALE, height: MAP_H * SCALE })
@@ -16,10 +17,10 @@ export function createHud({ onBackpack }) {
   const root = h('div.hud', {},
     h('div.hud-left', {},
       h('div.hud-biome', {}, biomeName, zone),
-      h('div.hud-row', {}, cash, caught, h('button.hud-chip.btnlike', { onclick: onBackpack, title: 'Backpack (B)' }, '🎒 Bag')),
+      h('div.hud-row', {}, cash, caught, score, h('button.hud-chip.btnlike', { onclick: onBackpack, title: 'Backpack (B)' }, '🎒 Bag')),
       team),
     minimap,
-    h('div.hud-help', {}, 'WASD move · Shift run · B backpack · M map'))
+    h('div.hud-help', {}, 'WASD move · Shift run · E talk · B backpack · M map'))
   layer().append(root)
 
   const world = getWorld(store.state.seed)
@@ -37,7 +38,15 @@ export function createHud({ onBackpack }) {
     g.fillRect(c.x * SCALE - 1, c.y * SCALE - 1, 3, 3)
   }
 
+  for (const t of world.trainers) {
+    g.fillStyle = '#222'
+    g.fillRect(t.x * SCALE - 1, t.y * SCALE - 1, 3, 3)
+    g.fillStyle = '#ff9f1a'
+    g.fillRect(t.x * SCALE, t.y * SCALE, 1, 1)
+  }
+
   function render(st) {
+    score.textContent = `★ ${st.score.total.toLocaleString()}`
     cash.textContent = money(st.money)
     caught.textContent = `◓ ${st.dex.caught.length}/151`
     team.replaceChildren(...Array.from({ length: 5 }, (_, i) => {

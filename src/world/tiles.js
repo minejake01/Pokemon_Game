@@ -47,6 +47,23 @@ export function buildTileset() {
     g.stroke()
   }
 
+  // Shallow water (walkable): lighter, with sandy speckles showing through
+  x = T.shallow * TILE
+  g.fillStyle = '#5b9fe0'
+  g.fillRect(x, 0, TILE, TILE)
+  for (let i = 0; i < 10; i++) {
+    g.fillStyle = i % 2 ? '#7db6ea' : '#4f93d6'
+    g.fillRect(x + Math.floor(rnd() * 29), Math.floor(rnd() * 29), 3, 2)
+  }
+  g.strokeStyle = '#cfe6fa'
+  g.lineWidth = 1.5
+  for (const [wx, wy] of [[5, 10], [17, 22]]) {
+    g.beginPath()
+    g.moveTo(x + wx, wy)
+    g.quadraticCurveTo(x + wx + 4, wy - 3, x + wx + 8, wy)
+    g.stroke()
+  }
+
   // Center floor tile (door mat)
   x = T.center * TILE
   speckle(g, x, '#d9c7a3', ['#e3d3b2'], 10)
@@ -128,35 +145,82 @@ export function buildTileset() {
   return canvas
 }
 
-// Trainer: red cap, simple body. Two frames for a walking bob.
+// A 24×32 person. `leg` shifts the legs for a walking bob.
+function drawPerson(g, x, look, leg = 0) {
+  g.fillStyle = 'rgba(0,0,0,0.25)'
+  g.beginPath(); g.ellipse(x + 12, 30, 8, 2.5, 0, 0, Math.PI * 2); g.fill()
+  g.fillStyle = look.legs
+  g.fillRect(x + 7, 22, 4, 7 - leg)
+  g.fillRect(x + 13, 22, 4, 5 + leg)
+  g.fillStyle = look.shirt
+  g.fillRect(x + 6, 14, 12, 9)
+  g.fillStyle = look.skin ?? '#f2c6a0' // face & hands
+  g.fillRect(x + 7, 6, 10, 8)
+  g.fillRect(x + 4, 16, 2, 4)
+  g.fillRect(x + 18, 16, 2, 4)
+  if (look.cap) {
+    g.fillStyle = look.cap
+    g.fillRect(x + 6, 3, 12, 4)
+    g.fillRect(x + 4, 6, 8, 2)
+    g.fillStyle = look.badge ?? '#ffffff'
+    g.fillRect(x + 10, 3, 4, 2)
+  } else {
+    g.fillStyle = look.hair // long hair instead of a cap
+    g.fillRect(x + 6, 3, 12, 4)
+    g.fillRect(x + 5, 5, 3, 10)
+    g.fillRect(x + 16, 5, 3, 10)
+  }
+  g.fillStyle = '#222222' // eyes
+  g.fillRect(x + 8, 9, 2, 2)
+  g.fillRect(x + 13, 9, 2, 2)
+}
+
+// The player: red cap, blue shirt. Two frames for a walking bob.
 export function buildTrainer() {
   const c = document.createElement('canvas')
   c.width = 48
   c.height = 32
   const g = c.getContext('2d')
-  for (let f = 0; f < 2; f++) {
-    const x = f * 24
-    const leg = f === 0 ? 0 : 2
-    g.fillStyle = 'rgba(0,0,0,0.25)'
-    g.beginPath(); g.ellipse(x + 12, 30, 8, 2.5, 0, 0, Math.PI * 2); g.fill()
-    g.fillStyle = '#2b3a67' // legs
-    g.fillRect(x + 7, 22, 4, 7 - leg)
-    g.fillRect(x + 13, 22, 4, 5 + leg)
-    g.fillStyle = '#3d7bd9' // shirt
-    g.fillRect(x + 6, 14, 12, 9)
-    g.fillStyle = '#f2c6a0' // face & hands
-    g.fillRect(x + 7, 6, 10, 8)
-    g.fillRect(x + 4, 16, 2, 4)
-    g.fillRect(x + 18, 16, 2, 4)
-    g.fillStyle = '#d32f2f' // cap
-    g.fillRect(x + 6, 3, 12, 4)
-    g.fillRect(x + 4, 6, 8, 2)
-    g.fillStyle = '#ffffff'
-    g.fillRect(x + 10, 3, 4, 2)
-    g.fillStyle = '#222222' // eyes
-    g.fillRect(x + 8, 9, 2, 2)
-    g.fillRect(x + 13, 9, 2, 2)
-  }
+  const look = { cap: '#d32f2f', shirt: '#3d7bd9', legs: '#2b3a67' }
+  for (let f = 0; f < 2; f++) drawPerson(g, f * 24, look, f === 0 ? 0 : 2)
+  return c
+}
+
+// Trainer NPC looks per class (see TRAINER_CLASSES in shared/world.js).
+const NPC_LOOKS = {
+  Youngster: { cap: '#f6b93b', shirt: '#2e86de', legs: '#3c6382' },
+  Lass: { hair: '#8e5a2b', shirt: '#e84393', legs: '#6c5ce7' },
+  'Bug Catcher': { cap: '#78e08f', shirt: '#f8f8f8', legs: '#38ada9', badge: '#079992' },
+  Picnicker: { hair: '#e17055', shirt: '#55efc4', legs: '#e1b12c' },
+  Channeler: { hair: '#dfe6e9', shirt: '#6c5ce7', legs: '#2d3436', skin: '#e8d3c0' },
+  Skier: { cap: '#ffffff', shirt: '#0abde3', legs: '#222f3e', badge: '#ee5253' },
+  Boarder: { cap: '#ff9f43', shirt: '#10ac84', legs: '#222f3e' },
+  Hiker: { cap: '#8d6e63', shirt: '#a1887f', legs: '#5d4037', skin: '#d7a77a' },
+  'Black Belt': { hair: '#222222', shirt: '#f5f6fa', legs: '#f5f6fa', skin: '#d7a77a' },
+  'Fire Breather': { hair: '#e55039', shirt: '#2f3640', legs: '#e55039' },
+  Burglar: { cap: '#2f3640', shirt: '#636e72', legs: '#2d3436', badge: '#2f3640' },
+  'Bird Keeper': { cap: '#a29bfe', shirt: '#fdcb6e', legs: '#6c5ce7' },
+  Fisherman: { cap: '#e1b12c', shirt: '#44bd32', legs: '#40739e' },
+  Swimmer: { hair: '#2d3436', shirt: '#0984e3', legs: '#f2c6a0' },
+}
+
+export function buildNpc(cls) {
+  const c = document.createElement('canvas')
+  c.width = 24
+  c.height = 32
+  drawPerson(c.getContext('2d'), 0, NPC_LOOKS[cls] ?? NPC_LOOKS.Youngster)
+  return c
+}
+
+// Bigger copy for dialog panels.
+export function npcPortrait(cls) {
+  const src = buildNpc(cls)
+  const c = document.createElement('canvas')
+  c.width = 96
+  c.height = 128
+  const g = c.getContext('2d')
+  g.imageSmoothingEnabled = false
+  g.drawImage(src, 0, 0, 96, 128)
   return c
 }
 

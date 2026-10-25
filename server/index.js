@@ -29,5 +29,5 @@ async function serveStatic(req, res) {
 }
 
 createServer((req, res) => handleApi(req, res, () => serveStatic(req, res))).listen(PORT, () => {
-  console.log(`Poke Arena running at http://localhost:${PORT}`)
+  console.log(`"Pokemon but you are not the main character" running at http://localhost:${PORT}`)
 })

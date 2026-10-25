@@ -5,6 +5,7 @@ export const store = {
   state: null,
   dex: null,
   set(state) {
+    if (state) state.receivedAt = Date.now() // server cooldowns are relative to this moment
     this.state = state
     for (const fn of listeners) fn(state)
   },

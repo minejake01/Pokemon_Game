@@ -195,7 +195,7 @@ img.silhouette { filter: brightness(0); opacity: .6; }
 .box-cell img { width: 64px; height: 64px; image-rendering: pixelated; }
 .box-cell small { color: var(--muted); }
 .box-cell.open, .box-cell:hover { border-color: var(--ink); }
-.dex { display: grid; grid-template-columns: 1fr 260px; gap: 14px; }
+.dex { display: grid; grid-template-columns: 1fr 330px; gap: 14px; }
 .dex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 5px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }
 .dex-cell { aspect-ratio: 1; background: #fff; border: 2px solid var(--line); border-radius: 10px; position: relative; padding: 0; display: grid; place-items: center; color: var(--ink); }
 .dex-cell small { position: absolute; top: 2px; left: 4px; font-size: 9px; font-weight: 800; color: var(--muted); }
@@ -205,7 +205,7 @@ img.silhouette { filter: brightness(0); opacity: .6; }
 .dex-cell.caught { background: #fff8d6; border-color: #e8c84a; }
 .dex-cell.open { border-color: var(--ink); }
 .dex-cell .q { font-family: var(--pixel); color: #bbb; }
-.dex-info { background: var(--panel-2); border: 2px solid var(--line); border-radius: 12px; padding: 14px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.dex-info { max-height: 60vh; overflow-y: auto; background: var(--panel-2); border: 2px solid var(--line); border-radius: 12px; padding: 14px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .dex-info h3 { margin: 4px 0; }
 .dex-info p { margin: 4px 0; font-size: 14px; }
 .legend { color: #8a5b00; font-weight: 800; }
@@ -231,6 +231,7 @@ img.silhouette { filter: brightness(0); opacity: .6; }
 .biome-mountain { --ground: #aaa499; --pad: #858075; }
 .biome-volcano { --ground: #6a4a40; --pad: #4a302a; }
 .biome-lakeshore { --ground: #ecdba6; --pad: #d1bd7f; }
+.biome-water { --ground: #5b9fe0; --pad: #3f7fc0; }
 .biome-swamp .bfield { background: linear-gradient(#b7c4a0 0 45%, var(--ground) 45%); }
 .biome-volcano .bfield { background: linear-gradient(#e8a77d 0 45%, var(--ground) 45%); }
 .biome-snow .bfield { background: linear-gradient(#dbe9f5 0 45%, var(--ground) 45%); }
@@ -314,3 +315,83 @@ img.silhouette { filter: brightness(0); opacity: .6; }
   .mr-types { display: none; }
   .hud-team { display: none; }
 }
+
+/* ---------- PRD 2 additions ---------- */
+.logo-sub { display: block; font-size: clamp(11px, 1.9vw, 20px); color: #fff; margin-top: 14px; letter-spacing: 1px; text-shadow: 3px 3px 0 var(--red), 5px 5px 0 #0005; }
+.evo-line { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
+.evo { display: flex; align-items: center; gap: 2px; font-weight: 800; color: var(--muted); }
+.evo img { width: 40px; height: 40px; image-rendering: pixelated; }
+.evo small { font-size: 10px; }
+
+/* Evolution stones */
+.ico-firestone, .ico-waterstone, .ico-thunderstone, .ico-leafstone, .ico-moonstone { border-radius: 40% 60% 45% 55%; }
+.ico-firestone { background: radial-gradient(circle at 35% 35%, #ffd27a, #e8590c 60%, #a61e00); }
+.ico-waterstone { background: radial-gradient(circle at 35% 35%, #c5f1ff, #2a8bd9 60%, #0b4f8a); }
+.ico-thunderstone { background: radial-gradient(circle at 35% 35%, #fffbd1, #8fd14f 55%, #3d8b1f); }
+.ico-leafstone { background: radial-gradient(circle at 35% 35%, #d8ffb0, #2f9e44 60%, #145a24); }
+.ico-moonstone { background: radial-gradient(circle at 35% 35%, #e9e4ff, #6d5f8f 60%, #2f2645); }
+
+/* Level-up upgrade cards */
+.upgrade-screen { z-index: 30; display: grid; place-items: center; background: #000b; backdrop-filter: blur(3px); animation: fadein .2s; }
+.up-inner { text-align: center; color: #fff; padding: 20px; }
+.up-inner h2 { font-family: var(--pixel); color: var(--yellow); font-size: clamp(20px, 4vw, 34px); margin: 4px 0; text-shadow: 3px 3px 0 var(--red); }
+.up-inner p { font-weight: 800; font-size: 17px; margin: 6px 0 18px; }
+.up-mon { width: 96px; height: 96px; image-rendering: pixelated; animation: bob 1.6s ease-in-out infinite; }
+.up-cards { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+.up-card {
+  width: 220px; background: var(--panel); color: var(--ink); border: 4px solid var(--ink); border-radius: 16px; padding: 16px 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; box-shadow: 0 8px 0 #0007; position: relative; transition: transform .12s;
+  animation: pop .25s;
+}
+.up-card:hover, .up-card:focus-visible { transform: translateY(-6px); border-color: var(--yellow); outline: none; box-shadow: 0 0 0 4px var(--red), 0 12px 0 #0007; }
+.up-card kbd { position: absolute; left: 10px; top: 10px; }
+.up-icon { font-size: 40px; }
+.up-card b { font-family: var(--pixel); font-size: 12px; }
+.up-card small { color: var(--muted); font-weight: 700; }
+.up-change { font-weight: 800; font-size: 18px; }
+.up-change strong { color: #1e8e3e; }
+.up-bar { width: 100%; height: 8px; background: #ddd; border-radius: 4px; overflow: hidden; display: flex; }
+.up-now { background: var(--blue); }
+.up-next { background: #3ccf6e; animation: blink 1s infinite; }
+.up-limit { font-size: 11px; }
+
+/* Trainer dialog */
+.trainer-panel { width: min(620px, 94vw); }
+.trainer-main { display: flex; gap: 18px; padding: 18px; align-items: flex-start; }
+.npc-portrait { width: 96px; height: 128px; image-rendering: pixelated; background: var(--panel-2); border: 3px solid var(--ink); border-radius: 12px; flex: none; }
+.trainer-body { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+.trainer-body p { margin: 0; }
+.quote { font-weight: 800; font-size: 17px; }
+.trainer-balls { display: flex; align-items: center; gap: 4px; font-weight: 800; }
+.trainer-balls .icon { width: 18px; height: 18px; }
+.cooldown { font-family: var(--pixel); font-size: 12px; color: var(--red); }
+
+/* Trainer battle extras */
+.btrainer { font-weight: 800; font-size: 13px; display: flex; justify-content: space-between; align-items: center; color: var(--muted); }
+.tball { display: inline-block; width: 12px; height: 12px; margin-left: 3px; border-radius: 50%; border: 2px solid #222; background: linear-gradient(#e3350d 45%, #222 45% 55%, #fff 55%); }
+.tball.out { filter: grayscale(1); opacity: .4; }
+.sprite.shiny { filter: drop-shadow(0 0 10px #ffe066); animation: sparkle 1.2s ease-in-out 3; }
+@keyframes sparkle { 50% { filter: drop-shadow(0 0 22px #fff) brightness(1.3); } }
+
+/* Score */
+.blackout { background: radial-gradient(circle, #2b2350, #000); }
+.score-card { background: #ffffff14; border: 2px solid #fff4; border-radius: 14px; padding: 14px 22px; margin: 10px auto 18px; width: fit-content; min-width: 320px; }
+.score-total { font-family: var(--pixel); font-size: 32px; color: var(--yellow); display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.score-total small { font-size: 11px; color: #fff; opacity: .8; }
+.score-parts { width: 100%; border-collapse: collapse; font-weight: 700; text-align: left; }
+.score-parts td { padding: 3px 8px; border-top: 1px solid #fff2; }
+.score-parts td:last-child { text-align: right; font-weight: 800; }
+
+/* Pokédex details & shinies */
+.dex-shiny { position: absolute; top: 1px; right: 3px; font-style: normal; font-size: 11px; }
+.shiny-tag { color: #b8860b; font-size: 13px; }
+.dex-base, .dex-owned { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+.dex-base .stat { grid-template-columns: 62px 30px 1fr; }
+.owned-mon { background: #fff; border: 2px solid var(--line); border-radius: 10px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
+.om-head { display: flex; align-items: center; gap: 8px; font-weight: 800; }
+.om-head small { margin-left: auto; color: var(--muted); }
+.om-stats { width: 100%; border-collapse: collapse; font-size: 12px; }
+.om-stats th { text-align: left; color: var(--muted); font-weight: 800; }
+.om-stats td, .om-stats th { padding: 1px 4px; }
+.om-stats td:nth-child(2) { font-weight: 800; }
+.owned-mon > small { color: var(--muted); font-weight: 700; }

@@ -8,6 +8,7 @@ export const TOWN = { x: 90, y: 90 }
 
 export const BIOMES = {
   ocean: { name: 'Ocean', color: '#2f6fb3' },
+  water: { name: 'Water', color: '#5b9fe0' },
   meadow: { name: 'Meadow', color: '#7cc85a' },
   forest: { name: 'Forest', color: '#3f8f3a' },
   swamp: { name: 'Swamp', color: '#6b7a3a' },
@@ -23,6 +24,7 @@ export const T = {
   meadow: 0, forest: 1, swamp: 2, snow: 3, mountain: 4, volcano: 5, sand: 6, water: 7, path: 8, center: 9,
   // obstacles
   tree: 10, pine: 11, boulder: 12, deadTree: 13, lavaRock: 14, flowers: 15, tallGrass: 16,
+  shallow: 17, // walkable shallow water (Water biome)
 }
 export const BLOCKING = new Set([T.water, T.tree, T.pine, T.boulder, T.deadTree, T.lavaRock])
 
@@ -86,7 +88,8 @@ export function getWorld(seed) {
 
       let b
       if (dTown < 7) b = 'town'
-      else if (elev < 0.27) b = 'ocean'
+      else if (elev < 0.2) b = 'ocean' // deep water: blocks walking
+      else if (elev < 0.27) b = 'water' // shallow water: walkable, home of Water-type Pokémon
       else if (elev < 0.31) b = 'lakeshore'
       else if (elev > 0.66) b = 'mountain'
       else if (temp > 0.74) b = 'snow'
@@ -97,7 +100,7 @@ export function getWorld(seed) {
       biome[i] = b
 
       ground[i] = {
-        ocean: T.water, lakeshore: T.sand, mountain: T.mountain, snow: T.snow, volcano: T.volcano,
+        ocean: T.water, water: T.shallow, lakeshore: T.sand, mountain: T.mountain, snow: T.snow, volcano: T.volcano,
         swamp: T.swamp, forest: T.forest, meadow: T.meadow, town: T.path,
       }[b]
 
@@ -128,7 +131,7 @@ export function getWorld(seed) {
             const x = px + dx, y = py + dy
             if (x < 3 || y < 3 || x >= MAP_W - 3 || y >= MAP_H - 3) continue
             const bb = biome[y * MAP_W + x]
-            if (bb !== 'ocean' && bb !== 'lakeshore') { best = { x, y, biome: bb }; break }
+            if (bb !== 'ocean' && bb !== 'water' && bb !== 'lakeshore') { best = { x, y, biome: bb }; break }
           }
         }
       }
@@ -169,9 +172,71 @@ export function getWorld(seed) {
     }
   }
 
-  const world = { seed, biome, ground, deco, reach, centers: centers.filter((c) => reach[c.y * MAP_W + c.x]) }
+  const liveCenters = centers.filter((c) => reach[c.y * MAP_W + c.x])
+  const world = { seed, biome, ground, deco, reach, centers: liveCenters, trainers: placeTrainers(seed, biome, reach, liveCenters) }
   worlds.set(seed, world)
   return world
+}
+
+// ---- Trainer NPCs ----------------------------------------------------------
+export const TRAINER_CLASSES = {
+  meadow: ['Youngster', 'Lass'],
+  forest: ['Bug Catcher', 'Picnicker'],
+  swamp: ['Channeler', 'Bug Catcher'],
+  snow: ['Skier', 'Boarder'],
+  mountain: ['Hiker', 'Black Belt'],
+  volcano: ['Fire Breather', 'Burglar'],
+  lakeshore: ['Bird Keeper', 'Fisherman'],
+  water: ['Swimmer', 'Fisherman'],
+  town: ['Youngster', 'Lass'],
+}
+const TRAINER_NAMES = ['Ben', 'Joey', 'Mia', 'Rick', 'Ana', 'Dan', 'Lily', 'Sam', 'Zoe', 'Kai', 'Ivy', 'Leo', 'Nora', 'Tim',
+  'Eve', 'Max', 'Ruby', 'Finn', 'June', 'Otto', 'Pia', 'Gus', 'Wren', 'Ray', 'Cleo', 'Hugo', 'Tess', 'Abe', 'Lou', 'Mae']
+
+// One trainer near every Poké Center plus a scattered grid. Trainers only stand on tiles whose
+// 8 neighbours are all reachable, so they can never block a path.
+function placeTrainers(seed, biome, reach, centers) {
+  const trainers = []
+  const open = (x, y) => {
+    if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2) return false
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (!reach[(y + dy) * MAP_W + x + dx]) return false
+    if (biome[y * MAP_W + x] === 'town') return false
+    if (centers.some((c) => Math.abs(c.x - x) <= 3 && Math.abs(c.y - y) <= 3)) return false
+    return !trainers.some((t) => Math.hypot(t.x - x, t.y - y) < 10)
+  }
+  const add = (x, y) => {
+    const n = trainers.length
+    const b = biome[y * MAP_W + x]
+    const classes = TRAINER_CLASSES[b] ?? TRAINER_CLASSES.meadow
+    const cls = classes[Math.floor(hash(n, 7, seed + 97) * classes.length)]
+    const name = TRAINER_NAMES[Math.floor(hash(n, 13, seed + 101) * TRAINER_NAMES.length)]
+    trainers.push({ id: `t${n}`, x, y, biome: b, cls, name: `${cls} ${name}` })
+  }
+  // Search outward from (px, py) between radius r0 and r1 for an open tile.
+  const near = (px, py, r0, r1, salt) => {
+    const a0 = hash(px, py, seed + salt) * Math.PI * 2
+    for (let r = r0; r <= r1; r++) {
+      for (let k = 0; k < 16; k++) {
+        const a = a0 + (k / 16) * Math.PI * 2
+        const x = Math.round(px + Math.cos(a) * r), y = Math.round(py + Math.sin(a) * r)
+        if (open(x, y)) return add(x, y)
+      }
+    }
+  }
+  for (const c of centers) {
+    if (c.id === 'c0') {
+      near(TOWN.x, TOWN.y, 10, 14, 103) // two easy trainers just outside town
+      near(TOWN.x, TOWN.y, 11, 15, 107)
+    } else near(c.x, c.y, 5, 9, 109)
+  }
+  for (let gy = 0; gy < 5; gy++) {
+    for (let gx = 0; gx < 5; gx++) {
+      const px = Math.round(18 + gx * 36 + (hash(gx, gy, seed + 113) - 0.5) * 20)
+      const py = Math.round(18 + gy * 36 + (hash(gx, gy, seed + 127) - 0.5) * 20)
+      if (distFromTown(px, py) > 12) near(px, py, 0, 6, 131)
+    }
+  }
+  return trainers
 }
 
 // A seed is good when every biome has plenty of reachable land and centers cover most biomes.
@@ -181,7 +246,7 @@ export function isGoodSeed(seed) {
   for (let i = 0; i < w.biome.length; i++) if (w.reach[i]) counts[w.biome[i]] = (counts[w.biome[i]] || 0) + 1
   const need = ['meadow', 'forest', 'swamp', 'snow', 'mountain', 'volcano', 'lakeshore']
   const centerBiomes = new Set(w.centers.map((c) => c.biome))
-  return need.every((b) => (counts[b] || 0) >= 700) && w.centers.length >= 12 &&
+  return need.every((b) => (counts[b] || 0) >= 700) && (counts.water || 0) >= 500 && w.centers.length >= 12 &&
     need.filter((b) => b !== 'lakeshore').every((b) => centerBiomes.has(b))
 }
 

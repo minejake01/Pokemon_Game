@@ -2,8 +2,12 @@ import { api } from '../api.js'
 import { store } from '../store.js'
 import { h, layer, typeBadge, hpBar, toast, money } from '../ui.js'
 import { BIOMES } from '../../shared/world.js'
+import { pctText } from '../../shared/balance.js'
 
-const ITEM_ORDER = ['pokeball', 'superball', 'ultraball', 'potion', 'superpotion', 'revive']
+const ITEM_ORDER = ['pokeball', 'superball', 'ultraball', 'potion', 'superpotion', 'revive', 'firestone', 'waterstone', 'thunderstone', 'leafstone', 'moonstone']
+const STAT_ROWS = [['hp', 'HP'], ['atk', 'Attack'], ['def', 'Defense'], ['spa', 'Sp. Atk'], ['spd', 'Sp. Def'], ['spe', 'Speed']]
+const dexNo = (id) => `#${String(id).padStart(3, '0')}`
+const upgradesText = (m) => `⚔️ Damage ${pctText(m.bonus.damage)} · ⚡ Speed ${pctText(m.bonus.speed)}`
 const TABS = [['items', 'Items'], ['team', 'Team'], ['box', 'Box (PC)'], ['dex', 'Pokédex']]
 
 export function openBackpack({ onClose, tab = 'items' }) {
@@ -54,6 +58,18 @@ export function openBackpack({ onClose, tab = 'items' }) {
   }
 
   function renderItems(st) {
+    if (usingItem && st.items[usingItem].kind === 'stone') {
+      const item = st.items[usingItem]
+      const evolvesWith = (m) => store.dex?.[m.speciesId - 1]?.evolutions.find((e) => e.item === item.name)
+      return h('div', {},
+        h('p.hint', {}, `Use the ${item.name} on which Pokémon?`, h('button.link', { onclick: () => { usingItem = null; render() } }, 'Cancel')),
+        h('div.mon-list', {}, [...st.team, ...st.box].map((m) => {
+          const evo = evolvesWith(m)
+          return h('button.mon-row', { disabled: !evo, onclick: () => call(() => api.useItem(usingItem, m.uid)).then(() => { usingItem = null; render() }) },
+            h('img.mini', { src: m.sprite, alt: '' }), h('span.mr-name', {}, m.name, h('small', {}, ` Lv${m.level}`)),
+            h('span.mr-hp', { style: { width: 'auto' } }, evo ? `→ ${evo.name}` : 'No effect'))
+        })))
+    }
     if (usingItem) {
       const item = st.items[usingItem]
       return h('div', {},
@@ -79,11 +95,12 @@ export function openBackpack({ onClose, tab = 'items' }) {
 
   function monDetail(m, actions) {
     return h('div.mon-detail', {},
-      h('div.md-left', {}, h('img.big', { src: m.sprite, alt: m.name }), h('div.btypes', {}, m.types.map(typeBadge))),
+      h('div.md-left', {}, h('img.big', { src: m.sprite, alt: m.name }), m.shiny && h('b.shiny-tag', {}, '✨ Shiny'), h('div.btypes', {}, m.types.map(typeBadge))),
       h('div.md-right', {},
         h('div.md-stats', {}, [['HP', m.maxHp], ['Attack', m.stats.atk], ['Defense', m.stats.def], ['Sp. Atk', m.stats.spa], ['Sp. Def', m.stats.spd], ['Speed', m.stats.spe]]
           .map(([k, v]) => h('div.stat', {}, h('span', {}, k), h('b', {}, v), h('div.statbar', {}, h('div', { style: { width: `${Math.min(100, (v / (m.level * 2.2 + 20)) * 100)}%` } }))))),
         h('div.md-moves', {}, m.moves.map((mv) => h('div.move-chip', { style: { borderColor: `var(--t-${mv.type})` } }, typeBadge(mv.type), ` ${mv.name}`, h('small', {}, mv.power ? ` ${mv.power}` : ' —')))),
+        h('div.md-xp', {}, upgradesText(m)),
         h('div.md-xp', {}, m.xpNext ? `XP ${m.xp.toLocaleString()} · ${(m.xpNext - m.xp).toLocaleString()} to Lv${m.level + 1}` : 'Max level'),
         h('div.md-actions', {}, actions),
       ))
@@ -132,25 +149,42 @@ export function openBackpack({ onClose, tab = 'items' }) {
   function renderDex(st) {
     const dex = store.dex
     if (!dex) return h('p.empty', {}, 'Loading Pokédex…')
-    const caught = new Set(st.dex.caught), seen = new Set(st.dex.seen)
+    const caught = new Set(st.dex.caught), seen = new Set(st.dex.seen), shiny = new Set(st.dex.shiny ?? [])
     const pick = dex.find((s) => s.id === dexPick)
     return h('div.dex', {},
       h('div.dex-grid', {}, dex.map((s) => {
         const state = caught.has(s.id) ? 'caught' : seen.has(s.id) ? 'seen' : 'unseen'
         return h(`button.dex-cell.${state}${dexPick === s.id ? '.open' : ''}`, { onclick: () => { dexPick = s.id; render() }, title: state === 'unseen' ? '???' : s.name },
-          h('small', {}, `#${String(s.id).padStart(3, '0')}`),
+          h('small', {}, dexNo(s.id)), shiny.has(s.id) && h('i.dex-shiny', {}, '✨'),
           state === 'unseen' ? h('span.q', {}, '?') : h('img', { src: s.sprite, alt: '', loading: 'lazy' }))
       })),
       h('div.dex-info', {}, pick ? (() => {
         const state = caught.has(pick.id) ? 'caught' : seen.has(pick.id) ? 'seen' : 'unseen'
         if (state === 'unseen') return [h('h3', {}, `#${String(pick.id).padStart(3, '0')} ???`), h('p', {}, 'Not seen yet. Explore new biomes to find it!')]
+        const owned = [...st.team, ...st.box].filter((m) => m.speciesId === pick.id)
         return [
           h('img.big', { src: pick.sprite, alt: pick.name, class: `big ${state === 'seen' ? 'silhouette' : ''}` }),
-          h('h3', {}, `#${String(pick.id).padStart(3, '0')} ${pick.name}`),
+          h('h3', {}, `${dexNo(pick.id)} ${pick.name}`),
           h('div.btypes', {}, pick.types.map(typeBadge)),
-          h('p', {}, state === 'caught' ? '✔ Caught' : '👁 Seen — not caught yet'),
+          h('p', {}, state === 'caught' ? '✔ Caught' : '👁 Seen — not caught yet', shiny.has(pick.id) ? ' · ✨ Shiny caught' : ''),
           h('p', {}, h('b', {}, 'Habitat: '), pick.habitats.map((b) => BIOMES[b].name).join(', ') || 'Unknown'),
+          h('p', {}, h('b', {}, 'Rarity: '), pick.rarity),
           pick.legendary && h('p.legend', {}, '★ Legendary — appears only deep in its home biome (zone Lv 35+).'),
+          state === 'caught' && h('div.dex-base', {},
+            h('b', {}, `Base stats (total ${pick.bst})`),
+            STAT_ROWS.map(([k, label]) => h('div.stat', {}, h('span', {}, label), h('b', {}, pick.base[k]),
+              h('div.statbar', {}, h('div', { style: { width: `${Math.min(100, pick.base[k] / 1.6)}%` } }))))),
+          state === 'caught' && pick.evolutions.length > 0 && h('p', {}, h('b', {}, 'Evolves: '),
+            pick.evolutions.map((e) => `${e.name} (${e.level ? 'Lv ' + e.level : e.item})`).join(', ')),
+          owned.length > 0 && h('div.dex-owned', {},
+            h('b', {}, `Your ${pick.name} (${owned.length})`),
+            owned.map((m) => h('div.owned-mon', {},
+              h('div.om-head', {}, h('img.mini', { src: m.sprite, alt: '' }), h('span', {}, `${m.shiny ? '✨ ' : ''}Lv${m.level}`),
+                h('small', {}, `HP ${Math.max(0, m.hp)}/${m.maxHp}`)),
+              h('table.om-stats', {},
+                h('tr', {}, h('th', {}, 'Stat'), h('th', {}, 'Value'), h('th', {}, 'IV')),
+                STAT_ROWS.map(([k, label]) => h('tr', {}, h('td', {}, label), h('td', {}, m.stats[k]), h('td', {}, m.ivs?.[k] ?? '?')))),
+              h('small', {}, upgradesText(m))))),
         ]
       })() : h('p', {}, `Seen ${seen.size} · Caught ${caught.size} / 151. Select an entry.`)))
   }
