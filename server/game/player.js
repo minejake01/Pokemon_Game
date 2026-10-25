@@ -1,32 +1,28 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { getWorld, isGoodSeed, TOWN, TILE } from '../../shared/world.js'
 import { speciesById, STARTERS, STARTING_BAG, STARTING_MONEY, TEAM_MAX, ITEMS, STONE_EVOS } from './data.js'
 import { createMon, viewMon, calcStats, setForm } from './pokemon.js'
 import { HttpError } from './errors.js'
 import { UPGRADES, upgradeBonus } from '../../shared/balance.js'
+import { readSave, writeSave, CACHEABLE } from './store.js'
 
 export const FREE_HEAL_COOLDOWN_MS = 3 * 60_000
 
-const SAVE_DIR = new URL('../saves/', import.meta.url)
-mkdirSync(SAVE_DIR, { recursive: true })
-
-const players = new Map()
-const saveFile = (id) => new URL(`${id}.json`, SAVE_DIR)
+const players = new Map() // in-memory cache, only used when the store allows it
 const VALID_ID = /^[0-9a-f-]{36}$/
 
-export function loadPlayer(id) {
+export async function loadPlayer(id) {
   if (!id || !VALID_ID.test(id)) return null
-  if (players.has(id)) return players.get(id)
-  const f = saveFile(id)
-  if (!existsSync(f)) return null
-  const p = migrate(JSON.parse(readFileSync(f, 'utf8')))
-  players.set(id, p)
+  if (CACHEABLE && players.has(id)) return players.get(id)
+  const data = await readSave(id)
+  if (!data) return null
+  const p = migrate(data)
+  if (CACHEABLE) players.set(id, p)
   return p
 }
 
-export function savePlayer(p) {
-  writeFileSync(saveFile(p.id), JSON.stringify(p))
+export async function savePlayer(p) {
+  await writeSave(p.id, p)
 }
 
 // Fills in fields added after a save was created.
@@ -53,7 +49,7 @@ function pickSeed() {
   }
 }
 
-export function newPlayer(name, starter) {
+export async function newPlayer(name, starter) {
   name = String(name ?? '').trim().slice(0, 12)
   if (!name) throw new HttpError(400, 'Enter a trainer name')
   starter = Number(starter)
@@ -82,8 +78,8 @@ export function newPlayer(name, starter) {
     pendingUpgrades: [], // one uid per level-up still waiting for an upgrade card pick
     lastFreeHealAt: 0,
   }
-  players.set(p.id, p)
-  savePlayer(p)
+  if (CACHEABLE) players.set(p.id, p)
+  await savePlayer(p)
   return p
 }
 

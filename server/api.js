@@ -11,7 +11,6 @@ import {
 } from './game/player.js'
 
 const MAX_SPAWNS = 24
-const lastSeen = new Map()
 
 const DEX = (() => {
   const hab = habitats()
@@ -43,25 +42,37 @@ async function readBody(req) {
   }
 }
 
-function requirePlayer(req, { allowGameOver = false } = {}) {
-  const p = loadPlayer(req.headers['x-player-id'])
+async function requirePlayer(req, { allowGameOver = false } = {}) {
+  const p = await loadPlayer(req.headers['x-player-id'])
   if (!p) throw new HttpError(404, 'No save found')
   if (p.gameOver && !allowGameOver) throw new HttpError(409, 'Game over')
   // Track play time from request activity (gaps over a minute count as idle).
-  const now = Date.now(), prev = lastSeen.get(p.id)
+  const now = Date.now(), prev = p.lastSeenAt
   if (prev && now - prev < 60_000) p.stats.playMs += now - prev
-  lastSeen.set(p.id, now)
+  p.lastSeenAt = now
   return p
 }
 
+// Requests for the same player run one at a time, so parallel requests (position reports,
+// spawns…) can't overwrite each other's changes when the save is re-read from shared storage.
+const queues = new Map()
+function oneAtATime(id, fn) {
+  if (!id) return fn()
+  const run = (queues.get(id) ?? Promise.resolve()).then(fn, fn)
+  const tail = run.catch(() => {})
+  queues.set(id, tail)
+  tail.then(() => queues.get(id) === tail && queues.delete(id))
+  return run
+}
+
 const routes = {
-  'POST /new': (req, body) => {
-    const p = newPlayer(body.name, body.starter)
+  'POST /new': async (req, body) => {
+    const p = await newPlayer(body.name, body.starter)
     return { playerId: p.id, state: viewState(p) }
   },
 
-  'GET /state': (req) => {
-    const p = requirePlayer(req, { allowGameOver: true })
+  'GET /state': async (req) => {
+    const p = await requirePlayer(req, { allowGameOver: true })
     return { state: viewState(p), battle: battleView(p) }
   },
 
@@ -191,10 +202,13 @@ export async function handleApi(req, res, next) {
   if (!route) return send(404, { error: 'Not found' })
   try {
     const body = await readBody(req)
-    const player = PUBLIC.has(key) ? null : requirePlayer(req)
-    const out = await route(req, body, player)
-    if (out.save && player) savePlayer(player)
-    delete out.save
+    const out = await oneAtATime(req.headers['x-player-id'], async () => {
+      const player = PUBLIC.has(key) ? null : await requirePlayer(req)
+      const result = await route(req, body, player)
+      if (result.save && player) await savePlayer(player)
+      delete result.save
+      return result
+    })
     send(200, out)
   } catch (err) {
     if (err instanceof HttpError) return send(err.status, { error: err.message })
