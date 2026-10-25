@@ -1,131 +1,126 @@
 import Phaser from 'phaser'
 import './style.css'
+import { api, setPlayerId } from './api.js'
+import { store } from './store.js'
+import { toast } from './ui.js'
+import { BIOMES } from '../shared/world.js'
+import { WorldScene } from './world/WorldScene.js'
+import { showTitle } from './screens/title.js'
+import { createHud } from './screens/hud.js'
+import { runBattle } from './screens/battle.js'
+import { openBackpack } from './screens/backpack.js'
+import { openCenter } from './screens/center.js'
+import { showGameOver, showVictory } from './screens/endings.js'
 
-const API = 'https://pokeapi.co/api/v2/pokemon'
-const STARTER_ID = 1 // Bulbasaur
-const WILD_ID = 19 // Rattata
+let game = null
+let hud = null
+let panel = null // the open Backpack / Poké Center panel, if any
+let inBattle = false
 
-const PLAYER_SPEED = 180 // px/s
-const WILD_SPEED_PER_STAT = 1.5 // px/s per point of base speed
-const SPRITE_SCALE = 1.5
-
-async function fetchPokemon(id) {
-  const res = await fetch(`${API}/${id}`)
-  if (!res.ok) throw new Error(`PokeAPI ${id}: HTTP ${res.status}`)
-  const data = await res.json()
-  const stat = (name) => data.stats.find((s) => s.stat.name === name).base_stat
-  return {
-    id: data.id,
-    name: data.name.charAt(0).toUpperCase() + data.name.slice(1),
-    sprite: data.sprites.front_default,
-    hp: stat('hp'),
-    speed: stat('speed'),
+const victoryKey = (id) => `pokeArena.victoryShown.${id}`
+function victoryShown(id) {
+  try {
+    return localStorage.getItem(victoryKey(id)) === '1'
+  } catch {
+    return store.victoryShown === id
+  }
+}
+function markVictoryShown(id) {
+  store.victoryShown = id
+  try {
+    localStorage.setItem(victoryKey(id), '1')
+  } catch {
+    /* ignore */
   }
 }
 
-class WorldScene extends Phaser.Scene {
-  constructor() {
-    super('World')
-  }
+const scene = () => game?.scene.getScene('World')
 
-  create() {
-    this.ready = false
-    this.status = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, 'Loading Pokémon…', {
-        fontFamily: 'monospace',
-        fontSize: '18px',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5)
+function openPanel(factory) {
+  if (panel || inBattle) return
+  scene()?.scene.pause()
+  panel = factory(() => {
+    panel = null
+    scene()?.scene.resume()
+  })
+}
 
-    this.cursors = this.input.keyboard.createCursorKeys()
-    this.wasd = this.input.keyboard.addKeys('W,A,S,D')
-
-    Promise.all([fetchPokemon(STARTER_ID), fetchPokemon(WILD_ID)])
-      .then(([starter, wild]) => this.loadSprites(starter, wild))
-      .catch((err) => {
-        console.error(err)
-        this.status.setText(`Failed to load Pokémon:\n${err.message}`)
-      })
-  }
-
-  loadSprites(starter, wild) {
-    this.load.image('starter', starter.sprite)
-    this.load.image('wild', wild.sprite)
-    this.load.once(Phaser.Loader.Events.COMPLETE, () => this.spawn(starter, wild))
-    this.load.start()
-  }
-
-  spawn(starter, wild) {
-    this.status.destroy()
-    const { width, height } = this.scale
-
-    this.player = this.physics.add
-      .sprite(width * 0.25, height / 2, 'starter')
-      .setScale(SPRITE_SCALE)
-      .setCollideWorldBounds(true)
-
-    this.wild = this.physics.add
-      .sprite(width * 0.8, height * 0.3, 'wild')
-      .setScale(SPRITE_SCALE)
-      .setCollideWorldBounds(true)
-    this.wildSpeed = wild.speed * WILD_SPEED_PER_STAT
-
-    this.wildLabel = this.add
-      .text(0, 0, `${wild.name}\nHP ${wild.hp}/${wild.hp}`, {
-        fontFamily: 'monospace',
-        fontSize: '14px',
-        color: '#ffffff',
-        align: 'center',
-        stroke: '#000000',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 1)
-
-    this.add.text(12, 12, `${starter.name}  ·  WASD / arrows to move`, {
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: '#ffffff',
-    })
-
-    this.ready = true
-  }
-
-  update() {
-    if (!this.ready) return
-
-    // Player movement
-    const left = this.cursors.left.isDown || this.wasd.A.isDown
-    const right = this.cursors.right.isDown || this.wasd.D.isDown
-    const up = this.cursors.up.isDown || this.wasd.W.isDown
-    const down = this.cursors.down.isDown || this.wasd.S.isDown
-
-    const dir = new Phaser.Math.Vector2((right ? 1 : 0) - (left ? 1 : 0), (down ? 1 : 0) - (up ? 1 : 0))
-    dir.normalize().scale(PLAYER_SPEED)
-    this.player.setVelocity(dir.x, dir.y)
-    if (dir.x !== 0) this.player.setFlipX(dir.x > 0) // front sprites face left
-
-    // Wild Pokémon chases the player, stopping when it reaches them
-    const dist = Phaser.Math.Distance.Between(this.wild.x, this.wild.y, this.player.x, this.player.y)
-    if (dist > 48) {
-      this.physics.moveToObject(this.wild, this.player, this.wildSpeed)
-      this.wild.setFlipX(this.player.x > this.wild.x)
-    } else {
-      this.wild.setVelocity(0, 0)
+const bridge = {
+  canMove: () => !panel && !inBattle,
+  onBiome(biome, zl, changed) {
+    hud.setBiome(biome, zl)
+    if (changed && biome !== 'ocean') toast(`Entered ${BIOMES[biome].name}`, 1500)
+  },
+  onMove(tx, ty) {
+    hud.setPos(tx, ty)
+  },
+  onCenter(center) {
+    openPanel((onClose) => openCenter(center, { onClose }))
+  },
+  async onBattle(spawn, removeWild) {
+    inBattle = true
+    const end = await runBattle(spawn)
+    removeWild()
+    inBattle = false
+    if (end.error) toast(end.error)
+    const { state } = await api.state()
+    store.set(state)
+    if (end.outcome === 'gameover') {
+      await endRun(() => showGameOver(state))
+      return
     }
-
-    this.wildLabel.setPosition(this.wild.x, this.wild.getTopLeft().y + 12)
-  }
+    scene().afterBattle({ respawn: end.outcome === 'blackout' ? state.pos : null })
+    if (end.outcome === 'blackout') toast('Your Pokémon were revived at the Poké Center… be careful!', 3000)
+    if (state.won && !victoryShown(state.id)) {
+      markVictoryShown(state.id)
+      scene().scene.pause()
+      await showVictory(state)
+      scene().scene.resume()
+    }
+  },
 }
 
-new Phaser.Game({
-  type: Phaser.AUTO,
-  parent: 'app',
-  width: 960,
-  height: 640,
-  backgroundColor: '#5a9e4b',
-  pixelArt: true,
-  physics: { default: 'arcade' },
-  loader: { crossOrigin: 'anonymous' },
-  scene: WorldScene,
+async function endRun(showScreen) {
+  game.destroy(true)
+  game = null
+  hud.destroy()
+  hud = null
+  await showScreen()
+  setPlayerId(null)
+  boot()
+}
+
+function startWorld(state) {
+  store.set(state)
+  hud = createHud({ onBackpack: () => openPanel((onClose) => openBackpack({ onClose })) })
+  game = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent: 'game',
+    backgroundColor: '#2f6fb3',
+    pixelArt: true,
+    scale: { mode: Phaser.Scale.RESIZE, width: '100%', height: '100%' },
+    physics: { default: 'arcade' },
+    loader: { crossOrigin: 'anonymous' },
+    scene: [],
+  })
+  game.scene.add('World', WorldScene, true, { bridge })
+  if (import.meta.env.DEV) window.__game = game // handy for debugging in the console
+}
+
+window.addEventListener('keydown', (e) => {
+  if (!game || inBattle || e.target instanceof HTMLInputElement) return
+  if ((e.key === 'b' || e.key === 'B') && !panel) {
+    e.preventDefault()
+    openPanel((onClose) => openBackpack({ onClose }))
+  } else if (e.key === 'm' || e.key === 'M') {
+    hud.toggleMap()
+  }
 })
+
+async function boot() {
+  const state = await showTitle()
+  if (!store.dex) api.dex().then((r) => (store.dex = r.species)).catch(() => {})
+  startWorld(state)
+}
+
+boot()
